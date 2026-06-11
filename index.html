@@ -165,7 +165,7 @@ const pourSound = new Audio('音效/倒瓜子.WAV');
 const bgmTracks = [new Audio('音效/背景音乐1.mp3'), new Audio('音效/背景音乐2.mp3')];
 [...crackSounds, ...eatSounds, pourSound, ...bgmTracks].forEach(a => { a.preload = 'auto'; a._vol = 1; });
 eatSounds.forEach(a => a._vol = 0.4);
-bgmTracks.forEach(a => { a._vol = 0.5; a.volume = 0; });
+bgmTracks.forEach(a => { a._vol = 0.2; a.volume = 0; });
 let audioUnlocked = false;
 let bgmStarted = false;
 let bgmIndex = 0;
