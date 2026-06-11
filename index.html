@@ -165,7 +165,8 @@ const pourSound = new Audio('音效/倒瓜子.WAV');
 const bgmTracks = [new Audio('音效/背景音乐1.mp3'), new Audio('音效/背景音乐2.mp3')];
 [...crackSounds, ...eatSounds, pourSound, ...bgmTracks].forEach(a => { a.preload = 'auto'; a._vol = 1; });
 eatSounds.forEach(a => a._vol = 0.4);
-bgmTracks.forEach(a => { a._vol = 0.2; a.volume = 0; });
+const BGM_VOLUME = 0.05;
+bgmTracks.forEach(a => { a._vol = BGM_VOLUME; a.volume = 0; });
 let audioUnlocked = false;
 let bgmStarted = false;
 let bgmIndex = 0;
@@ -184,7 +185,7 @@ function fadeAudio(from, to, done) {
   if (bgmFade) cancelAnimationFrame(bgmFade);
   const start = performance.now();
   const fromStart = from ? from.volume : 0;
-  const toTarget = to._vol;
+  const toTarget = bgmTargetVolume();
   function step(ts) {
     const p = clamp((ts - start) / (BGM_FADE_SEC * 1000), 0, 1);
     const e = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
@@ -203,7 +204,7 @@ function fadeAudio(from, to, done) {
 function playBGMTrack(index, crossfadeFrom = null) {
   const track = bgmTracks[index];
   track.currentTime = 0;
-  track.volume = crossfadeFrom ? 0 : track._vol;
+  track.volume = crossfadeFrom ? 0 : bgmTargetVolume();
   const p = track.play();
   if (p && p.catch) p.catch(() => { bgmStarted = false; });
   if (crossfadeFrom) fadeAudio(crossfadeFrom, track);
@@ -218,8 +219,31 @@ function startBGM() {
   bgmStarted = true;
   playBGMTrack(bgmIndex);
 }
+function bgmTargetVolume() {
+  return fishMode ? 0 : BGM_VOLUME;
+}
+function syncBGMVolume(force = false) {
+  if (force && bgmFade) {
+    cancelAnimationFrame(bgmFade);
+    bgmFade = null;
+  }
+  if (!bgmStarted) return;
+  const target = bgmTargetVolume();
+  bgmTracks.forEach((track, index) => {
+    if (index === bgmIndex && !track.paused) {
+      track.volume = target;
+    } else {
+      track.volume = 0;
+      if (force && !track.paused) {
+        track.pause();
+        track.currentTime = 0;
+      }
+    }
+  });
+}
 function updateBGM() {
   if (!bgmStarted || bgmFade) return;
+  syncBGMVolume();
   const track = bgmTracks[bgmIndex];
   if (!Number.isFinite(track.duration) || track.duration <= BGM_FADE_SEC) return;
   if (track.duration - track.currentTime <= BGM_FADE_SEC) switchBGM();
@@ -670,7 +694,7 @@ cv.addEventListener('pointerdown', e => {
   ensureAudio();
   unlockAudio();
   if (trashHitTest(e.clientX, e.clientY)) { sweep(); return; }
-  if (fishHitTest(e.clientX, e.clientY)) { fishMode = !fishMode; fishBounce = 1; return; }
+  if (fishHitTest(e.clientX, e.clientY)) { fishMode = !fishMode; syncBGMVolume(true); fishBounce = 1; return; }
   const s = hitSeed(e.clientX, e.clientY);
   if (s) { pressedSeed = s; return; }
   if (bagHitTest(e.clientX, e.clientY)) pour();
