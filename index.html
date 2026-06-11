@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>嗑会儿瓜子</title>
-<link rel="icon" href="素材/标签页图标.png">
+<link rel="icon" href="web-assets/icon.png">
 <style>
   html,body{margin:0;height:100%;overflow:hidden;background:#e9e2d2;}
   #c{display:block;width:100vw;height:100vh;touch-action:none;cursor:default;}
@@ -23,7 +23,7 @@
 <canvas id="c"></canvas>
 <div id="ui">
   <div id="counter" style="display:none;">0</div>
-  <div id="goldCounter" style="display:none;"><img src="素材/金瓜子仁-新版.png" alt="金瓜子"><span id="goldNum">0</span></div>
+  <div id="goldCounter" style="display:none;"><img src="web-assets/kernel-gold.png" alt="金瓜子"><span id="goldNum">0</span></div>
 </div>
 <script>
 'use strict';
@@ -31,16 +31,26 @@
 /* ================= 图片加载 ================= */
 const ASSETS = {}, ASP = {};
 const IMG_SRC = {
-  seedThin:'素材/瓜子-瘦.png', seedFat:'素材/瓜子-胖.png',
-  shellThin:'素材/瓜子壳-完整-瘦-新版.png', shellFat:'素材/瓜子壳-完整-胖-新版2.png',
-  kernelThin:'素材/瓜子仁-瘦.png', kernelFat:'素材/瓜子仁-胖.png', kernelGold:'素材/金瓜子仁-新版.png',
-  debris4:'素材/瓜子壳-碎屑4.png', debris5:'素材/瓜子壳-碎屑5.png',
-  bag:'素材/左上角包装-新版.png',
+  seedThin:'web-assets/seed-thin.png', seedFat:'web-assets/seed-fat.png',
+  shellThin:'web-assets/shell-thin.png', shellFat:'web-assets/shell-fat.png',
+  kernelThin:'web-assets/kernel-thin.png', kernelFat:'web-assets/kernel-fat.png', kernelGold:'web-assets/kernel-gold.png',
+  debris4:'web-assets/debris-4.png', debris5:'web-assets/debris-5.png',
+  bag:'web-assets/bag.png',
 };
+const loadingEl = document.getElementById('loading');
+const imgEntries = Object.entries(IMG_SRC);
+let loadedImgs = 0;
 Promise.all(Object.entries(IMG_SRC).map(([k, src]) =>
   new Promise((res, rej) => {
     const img = new Image();
-    img.onload = () => { ASSETS[k] = img; res(); };
+    const timer = setTimeout(() => rej(src + ' 加载超时'), 15000);
+    img.onload = () => {
+      clearTimeout(timer);
+      ASSETS[k] = img;
+      loadedImgs++;
+      loadingEl.textContent = '加载中 ' + loadedImgs + '/' + imgEntries.length;
+      res();
+    };
     img.onerror = () => rej(src);
     img.src = src;
   })
@@ -48,7 +58,7 @@ Promise.all(Object.entries(IMG_SRC).map(([k, src]) =>
   for (const [k, img] of Object.entries(ASSETS)) ASP[k] = img.width / img.height;
   init();
 }).catch(src => {
-  document.getElementById('loading').textContent = '素材加载失败: ' + src;
+  loadingEl.textContent = '素材加载失败: ' + src;
 });
 
 function init() {
