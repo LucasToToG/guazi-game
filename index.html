@@ -10,7 +10,7 @@
   #c{display:block;width:100vw;height:100vh;touch-action:none;cursor:default;}
   #ui{position:fixed;top:18px;right:18px;display:flex;flex-direction:column;gap:10px;align-items:flex-end;z-index:10;}
   #counter{font:500 15px/1 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
-    color:rgba(107,81,58,.55);user-select:none;-webkit-user-select:none;}
+    color:rgba(107,81,58,.55);user-select:none;-webkit-user-select:none;transform-origin:center right;}
   #goldCounter{font:500 15px/1 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
     color:rgba(200,146,42,.85);align-items:center;gap:4px;user-select:none;-webkit-user-select:none;}
   #goldCounter img{height:24px;display:block;}
@@ -33,9 +33,11 @@ const ASSETS = {}, ASP = {};
 const IMG_SRC = {
   seedThin:'web-assets/seed-thin.png', seedFat:'web-assets/seed-fat.png',
   shellThin:'web-assets/shell-thin.png', shellFat:'web-assets/shell-fat.png',
+  shellThinOld:'web-assets/shell-thin-old.png', shellFatOld:'web-assets/shell-fat-old.png',
   kernelThin:'web-assets/kernel-thin.png', kernelFat:'web-assets/kernel-fat.png', kernelGold:'web-assets/kernel-gold.png',
   debris4:'web-assets/debris-4.png', debris5:'web-assets/debris-5.png',
   bag:'web-assets/bag.png',
+  trashBody:'web-assets/trash-body.png', trashLid:'web-assets/trash-lid.png', trashBars:'web-assets/trash-bars.png',
 };
 const loadingEl = document.getElementById('loading');
 const imgEntries = Object.entries(IMG_SRC);
@@ -111,6 +113,8 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 /* ================= 瓜子配置 ================= */
 const SEED_H = { normal: 78, big: 90, gold: 78 };
 const MAX_SEEDS = 100;  // 桌面瓜子上限
+const MAX_CRUMBS = 90;
+const MAX_GOLD_PARTS = 80;
 
 /* 预缩放精灵：原图近千像素高，每帧实时缩放太贵；先缩到展示尺寸的 2 倍 */
 const SPRITES = {};
@@ -122,15 +126,23 @@ for (const k of ['seedThin', 'seedFat']) {
   SPRITES[k] = c;
 }
 let sinceGold = 99;  // 距上一颗金瓜子的间隔，刚出过金则压低概率防连出
+function rollGoldTargetGap() {
+  return goldN >= 5 ? 14 + ((Math.random() * 27) | 0) : 20 + ((Math.random() * 40) | 0);
+}
+let nextGoldAt = 20 + ((Math.random() * 40) | 0);  // 下一颗金瓜子的目标间隔，5 颗金瓜子后缩短
 function rollType() {
   sinceGold++;
-  const goldP = sinceGold < 12 ? 0.004 : 0.03;
+  const goldBaseP = goldN >= 5 ? 0.024 : 0.015;
+  const goldP = sinceGold < 10 ? 0.003 : sinceGold >= nextGoldAt ? (goldN >= 5 ? 0.5 : 0.35) : goldBaseP;
   const r = Math.random();
-  if (r < goldP) { sinceGold = 0; return 'gold'; }
+  if (r < goldP) { sinceGold = 0; nextGoldAt = rollGoldTargetGap(); return 'gold'; }
   return r < goldP + 0.10 ? 'big' : 'normal';
 }
 function rollVariant() { return Math.random() < 0.5 ? 'thin' : 'fat'; }
-function shellImg(variant) { return variant === 'thin' ? ASSETS.shellThin : ASSETS.shellFat; }
+function shellImg(variant, old) {
+  if (old) return variant === 'thin' ? ASSETS.shellThinOld : ASSETS.shellFatOld;
+  return variant === 'thin' ? ASSETS.shellThin : ASSETS.shellFat;
+}
 function kernelImg(type, variant) {
   if (type === 'gold') return ASSETS.kernelGold;
   return variant === 'thin' ? ASSETS.kernelThin : ASSETS.kernelFat;
@@ -139,9 +151,12 @@ function kernelImg(type, variant) {
 /* ================= 状态 ================= */
 const seeds = [], shells = [], kernels = [], goldParts = [], crumbs = [];
 let pressedSeed = null;
+let pressStartAt = 0;
 let pourQueue = 0, pourTimer = 0;
+let pourRounds = 0, firstPourGoldCountdown = -1, firstBatchRemain = 0;
 let shake = { t: 0, mag: 0 };
-let hoverPtr = false;
+let combo = 0, lastCrackAt = -9;  // 连嗑：1.2s 内连续嗑则升档，纯表现不计分
+let sweepRemain = 0, sweepLid = 0;  // 清扫中剩余壳数 / 清扫时桶盖开合
 let now = 0;
 
 let total = 0;
@@ -151,19 +166,44 @@ const BAG_LIMIT = 800;
 let bagCount = 0;
 let needSweep = false;
 let trashBounce = 0;
+let trashWobble = 0;
+let dunkSweepTimer = -1;
+// 金瓜子集卡：攒到 2 / 5 / 9 颗，金瓜子落到废纸篓上，桶逐步变金
+// 0 = 普通桶  1 = 金盖  2 = 金盖+金竖纹  3 = 全金桶
+const GOLD_TIER_GOALS = [2, 5, 9];
+let goldTier = 0;
+let goldDrop = null;
+let goldDropDelay = -1;
+let goldSweep = -1;   // ≥0 表示第三档落地后"从下往上镀金"扫光播放中
+let goldFlash = 0;    // 第三档落地瞬间的全屏金闪
+let trashShine = 0;   // 集满后每颗金瓜子入账，金桶闪一下金光
 
 const counterEl = document.getElementById('counter');
 const goldCounterEl = document.getElementById('goldCounter');
 const goldNumEl = document.getElementById('goldNum');
 let goldShown = goldN;
+let shownTotal = 0;
+function visibleGoldCount() {
+  if (goldTier >= GOLD_TIER_GOALS.length) return goldN - GOLD_TIER_GOALS[GOLD_TIER_GOALS.length - 1];
+  return goldN - (goldTier > 0 ? GOLD_TIER_GOALS[goldTier - 1] : 0);
+}
 function refreshCounter() {
   if (total > 0) {
     counterEl.style.display = '';
     counterEl.textContent = total;
+    if (total !== shownTotal) {
+      shownTotal = total;
+      counterEl.animate(
+        [{ transform: 'scale(1.3)' }, { transform: 'scale(1)' }],
+        { duration: 240, easing: 'cubic-bezier(.2,1.6,.4,1)' }
+      );
+    }
   }
   if (goldShown > 0) {
     goldCounterEl.style.display = 'flex';
     goldNumEl.textContent = goldShown;
+  } else {
+    goldCounterEl.style.display = 'none';  // 落桶后清零，攒下一档
   }
 }
 refreshCounter();
@@ -172,10 +212,13 @@ refreshCounter();
 const crackSounds = [new Audio('音效/嗑瓜子-1.WAV'), new Audio('音效/嗑瓜子-2.WAV'), new Audio('音效/嗑瓜子-3.WAV')];
 const eatSounds = [new Audio('音效/吃瓜子仁-1.WAV'), new Audio('音效/吃瓜子仁-2.WAV')];
 const pourSound = new Audio('音效/倒瓜子.WAV');
+const goldSound = new Audio('音效/金瓜子.WAV');
+const sweepSound = new Audio('音效/清扫声.WAV');
+const dunkSound = new Audio('音效/废纸篓碰撞.WAV');
 const bgmTracks = [new Audio('音效/背景音乐1.mp3'), new Audio('音效/背景音乐2.mp3')];
-[...crackSounds, ...eatSounds, pourSound, ...bgmTracks].forEach(a => { a.preload = 'auto'; a._vol = 1; });
+[...crackSounds, ...eatSounds, pourSound, goldSound, sweepSound, dunkSound, ...bgmTracks].forEach(a => { a.preload = 'auto'; a._vol = 1; });
 eatSounds.forEach(a => a._vol = 0.4);
-const BGM_VOLUME = 0.05;
+const BGM_VOLUME = 0;
 bgmTracks.forEach(a => { a._vol = BGM_VOLUME; a.volume = 0; });
 let audioUnlocked = false;
 let bgmStarted = false;
@@ -185,7 +228,7 @@ const BGM_FADE_SEC = 4;
 function unlockAudio() {
   if (audioUnlocked) return;
   audioUnlocked = true;
-  [...crackSounds, ...eatSounds].forEach(a => {
+  [...crackSounds, ...eatSounds, goldSound].forEach(a => {
     a.volume = 0;
     a.play().then(() => { a.pause(); a.currentTime = 0; a.volume = a._vol; }).catch(() => {});
   });
@@ -291,32 +334,32 @@ function playMouseClick() {
     src.start(t + dl); src.stop(t + dl + dur + 0.02);
   });
 }
-function playCrack() {
+function playCrack(perfect) {
   if (muted) return;
   if (fishMode) { playMouseClick(); return; }
-  const a = crackSounds[(Math.random() * 3) | 0];
+  // 完美开壳固定用最脆的嗑瓜子-3，且播得更快更脆
+  const a = perfect ? crackSounds[2] : crackSounds[(Math.random() * 3) | 0];
+  a.playbackRate = (perfect ? 1.18 : 1) + combo * 0.015;  // 连嗑时嗑声略快略脆
   a.currentTime = 0;
   a.play().catch(() => {});
 }
+let lastEatIdx = -1;
 function playEat() {
   if (muted || fishMode) return;
-  const a = eatSounds[(Math.random() * 2) | 0];
-  a.volume = a._vol;
+  let idx = (Math.random() * 2) | 0;
+  if (idx === lastEatIdx) idx = 1 - idx;
+  lastEatIdx = idx;
+  const a = eatSounds[idx];
+  a.volume = a._vol * (0.8 + Math.random() * 0.4);
+  a.playbackRate = 0.92 + Math.random() * 0.16;
   a.currentTime = 0;
   a.play().catch(() => {});
 }
 function playDing() {
-  if (muted || !AC || fishMode) return;
-  const t = AC.currentTime;
-  // 超级玛丽金币式：B5 短促起音 → E6 延音衰减
-  [[987.77, 0, 0.085, 0.09], [1318.51, 0.085, 0.75, 0.8]].forEach(([fr, dl, dur, stop]) => {
-    const o = AC.createOscillator(), g = AC.createGain();
-    o.type = 'square'; o.frequency.value = fr;
-    g.gain.setValueAtTime(0.0001, t + dl);
-    g.gain.exponentialRampToValueAtTime(0.085, t + dl + 0.006);
-    g.gain.exponentialRampToValueAtTime(0.001, t + dl + dur);
-    o.connect(g); g.connect(AC.destination); o.start(t + dl); o.stop(t + dl + stop);
-  });
+  if (muted || fishMode) return;
+  goldSound.volume = goldSound._vol;
+  goldSound.currentTime = 0;
+  goldSound.play().catch(() => {});
 }
 function playPour() {
   if (muted || fishMode) return;
@@ -324,17 +367,16 @@ function playPour() {
   pourSound.play().catch(() => {});
 }
 function playSweep() {
-  if (muted || !AC || fishMode) return;
-  const t = AC.currentTime;
-  const src = AC.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
-  const f = AC.createBiquadFilter(); f.type = 'lowpass';
-  f.frequency.setValueAtTime(500, t);
-  f.frequency.exponentialRampToValueAtTime(2600, t + 0.18);
-  f.frequency.exponentialRampToValueAtTime(350, t + 0.5);
-  const g = AC.createGain(); g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(0.3, t + 0.12);
-  g.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
-  src.connect(f); f.connect(g); g.connect(AC.destination); src.start(t); src.stop(t + 0.6);
+  if (muted || fishMode) return;
+  sweepSound.volume = sweepSound._vol;
+  sweepSound.currentTime = 0;
+  sweepSound.play().catch(() => {});
+}
+function playDunk() {
+  if (muted || fishMode) return;
+  dunkSound.volume = dunkSound._vol;
+  dunkSound.currentTime = 0;
+  dunkSound.play().catch(() => {});
 }
 
 /* ================= 桌面背景 ================= */
@@ -394,31 +436,83 @@ function mouthPoint() {
 function bagHitTest(px, py) {
   return px < bagDrawW * 0.5 + 30 && py < bagDrawH * 0.5 + 20;
 }
+function bagLocalPoint(px, py) {
+  const bx = bagDrawW * 0.04 + bagHover * 26;
+  const by = bagDrawH * 0.08 + bagHover * 26;
+  const rot = -0.78;
+  const dx = px - bx, dy = py - by;
+  const c = Math.cos(rot), sn = Math.sin(rot);
+  return { x: dx * c + dy * sn, y: -dx * sn + dy * c };
+}
+function bagWorldPoint(lx, ly) {
+  const bx = bagDrawW * 0.04 + bagHover * 26;
+  const by = bagDrawH * 0.08 + bagHover * 26;
+  const rot = -0.78;
+  const c = Math.cos(rot), sn = Math.sin(rot);
+  return { x: bx + lx * c - ly * sn, y: by + lx * sn + ly * c };
+}
+function safeSeedSpot(x, y, h = SEED_H.normal) {
+  let px = clamp(x, 60, W - 60), py = clamp(y, 100, H - 60);
+
+  // 包装是前景物体：瓜子中心不允许落进包装矩形内，否则会被完全遮住。
+  // 推到右边或下边，视觉上最多只会被压住半颗左右。
+  const lp = bagLocalPoint(px, py);
+  const left = -bagDrawW / 2, right = bagDrawW / 2;
+  const top = -bagDrawH / 2, bottom = bagDrawH / 2;
+  if (lp.x > left && lp.x < right && lp.y > top && lp.y < bottom) {
+    const pad = h * 0.48;
+    const toRight = right - lp.x;
+    const toBottom = bottom - lp.y;
+    const wp = toRight < toBottom
+      ? bagWorldPoint(right + pad, lp.y)
+      : bagWorldPoint(lp.x, bottom + pad);
+    px = wp.x; py = wp.y;
+  }
+
+  // 废纸篓绘制在最上层，桌面瓜子不能停在它下面。
+  const tp = trashPos();
+  const dx = px - tp.x, dy = py - tp.y;
+  const minD = TZ * 0.82 + h * 0.5;
+  const d2 = dx * dx + dy * dy;
+  if (d2 < minD * minD) {
+    const d = Math.sqrt(d2) || 1;
+    px = tp.x + dx / d * minD;
+    py = tp.y + dy / d * minD;
+  }
+
+  return { x: clamp(px, 60, W - 60), y: clamp(py, 100, H - 60) };
+}
 
 /* ================= 倒瓜子 ================= */
-function findSpot() {
+function findSpot(seedH = SEED_H.normal) {
   for (let i = 0; i < 12; i++) {
     const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random());
-    const x = clamp(W * 0.50 + Math.cos(a) * r * W * 0.45, 70, W - 70);
-    const y = clamp(H * 0.52 + Math.sin(a) * r * H * 0.42, 110, H - 90);
-    if (x < bagDrawW * 0.55 && y < bagDrawH * 0.6) continue;
+    const p = safeSeedSpot(
+      W * 0.50 + Math.cos(a) * r * W * 0.45,
+      H * 0.52 + Math.sin(a) * r * H * 0.42,
+      seedH
+    );
+    const x = p.x, y = p.y;
     let ok = true;
     for (const s of seeds)
       if (Math.hypot(x - s.tx, y - s.ty) < 55) { ok = false; break; }
     if (ok) return { x, y };
   }
-  return {
-    x: clamp(W * 0.5 + rnd(-W * 0.4, W * 0.4), 70, W - 70),
-    y: clamp(H * 0.52 + rnd(-H * 0.36, H * 0.36), 110, H - 90),
-  };
+  return safeSeedSpot(W * 0.5 + rnd(-W * 0.4, W * 0.4), H * 0.52 + rnd(-H * 0.36, H * 0.36), seedH);
 }
-function spawnSeed() {
+function spawnSeed(forceType = null) {
   const m = mouthPoint();
-  const type = rollType(), variant = rollVariant();
-  const spot = findSpot();
+  // 'nogold'：第一批瓜子里除保底外不允许自然出金，保证首批只有一颗金
+  let type;
+  if (forceType === 'nogold') { sinceGold++; type = Math.random() < 0.10 ? 'big' : 'normal'; }
+  else type = forceType || rollType();
+  const variant = rollVariant();
+  if (forceType === 'gold') { sinceGold = 0; nextGoldAt = rollGoldTargetGap(); }
+  const seedH = SEED_H[type] * rnd(0.95, 1.05);
+  const spot = findSpot(seedH);
   seeds.push({
     type, variant,
-    H: SEED_H[type] * rnd(0.95, 1.05),
+    H: seedH,
     sx: m.x, sy: m.y, tx: spot.x, ty: spot.y,
     x: m.x, y: m.y,
     t: 0, dur: rnd(0.55, 0.85),
@@ -429,20 +523,36 @@ function spawnSeed() {
 }
 function pour() {
   if (needSweep) { trashBounce = 1; return; }
-  const n = Math.min(16 + (Math.random() * 6 | 0), MAX_SEEDS - seeds.length - pourQueue);
+  const baseN = 16 + (Math.random() * 6 | 0);
+  const n = Math.min(Math.round(baseN * 1.5), MAX_SEEDS - seeds.length - pourQueue);
   BAG.wig = 1;
   if (n <= 0) return;
+  if (pourRounds === 0) { firstPourGoldCountdown = (Math.random() * n) | 0; firstBatchRemain = n; }
+  pourRounds++;
   pourQueue += n;
   playPour();
 }
 
 /* ================= 嗑开 ================= */
-function crackSeed(s) {
+function crackSeed(s, charge = 0) {
   const i = seeds.indexOf(s);
   if (i >= 0) seeds.splice(i, 1);
   if (pressedSeed === s) pressedSeed = null;
+  // 第一颗嗑开的永远不是金瓜子：悄悄换成普通的，金的转移给桌上另一颗（外观无差别）
+  if (total === 0 && s.type === 'gold') {
+    s.type = 'normal';
+    const others = seeds.filter(o => o.type !== 'gold');
+    if (others.length) others[(Math.random() * others.length) | 0].type = 'gold';
+    else if (pourQueue > 0) firstPourGoldCountdown = (Math.random() * Math.min(pourQueue, 5)) | 0;
+  }
   const gold = s.type === 'gold';
-  playCrack();
+  combo = now - lastCrackAt < 1.2 ? Math.min(8, combo + 1) : 0;
+  lastCrackAt = now;
+  const chargeBoost = 1 + charge * 1.4;
+  const boost = (1 + combo * 0.05) * chargeBoost;  // 连嗑和蓄力都会让壳飞得更猛
+  // 完美开壳（7%，金瓜子除外）：两片无裂缝旧版壳对称飞出，嗑声最脆，仁翻跟头
+  const perfect = !gold && Math.random() < 0.07;
+  playCrack(perfect);
   if (gold) playDing();
   if (gold) shake = { t: 0.13, mag: 3 };  // 只有金瓜子震动
 
@@ -451,26 +561,40 @@ function crackSeed(s) {
   // 嗑开结果：B 2完整壳(50%) / A 2碎屑+1完整壳(30%) / C 3-4片碎屑(20%)
   const roll = Math.random();
   let pieceTypes;
-  if (roll < 0.50) pieceTypes = ['shell', 'shell'];
+  if (perfect || roll < 0.50) pieceTypes = ['shell', 'shell'];
   else if (roll < 0.80) pieceTypes = ['debris', 'debris', 'shell'];
   else pieceTypes = Math.random() < 0.5 ? ['debris', 'debris', 'debris'] : ['debris', 'debris', 'debris', 'debris'];
   // 碎屑只用 4、5
   const pickDebris = () => Math.random() < 0.5 ? 'debris4' : 'debris5';
+  // 完美开壳两片共用同一组参数，保证镜像对称
+  const pSpd = rnd(230, 330), pAOff = rnd(-0.12, 0.12), pVr = rnd(5, 9);
+  const farP = 0.45;
+  const chargedFarP = Math.min(0.9, farP + charge * 0.35);
+  const normalChargedFarP = charge > 0 ? Math.min(0.5, charge * 0.5) : 0;
+  const perfectFarP = 0.3;
+  const pFar = s.type !== 'normal' && Math.random() < perfectFarP;
   for (let k = 0; k < pieceTypes.length; k++) {
     const isShell = pieceTypes[k] === 'shell';
+    const useOld = perfect || (isShell && Math.random() < 0.35);
     const side = k % 2 === 0 ? -1 : 1;
-    const a = perp + rnd(-0.5, 0.5);
+    const a = perp + (perfect ? pAOff : rnd(-0.5, 0.5));
+    // 胖/金瓜子的壳更容易猛飞，能横跨半个甚至一个屏幕
+    const far = perfect ? pFar : (s.type !== 'normal' ? Math.random() < chargedFarP : Math.random() < normalChargedFarP);
+    const fling = far ? (perfect ? rnd(8, 12) : rnd(8, 18 + charge * 12)) : 1;
     shells.push({
       kind: isShell ? 'shell' : 'debris',
       variant: s.variant,
+      oldShell: useOld,
       imgKey: isShell ? null : pickDebris(),
       H: isShell ? shellH : shellH * rnd(0.85, 1.05),
       side,
       x: s.x + Math.cos(a) * side * 5,
       y: s.y + Math.sin(a) * side * 5,
-      vx: Math.cos(a) * side * rnd(150, 340) + rnd(-80, 80),
-      vy: Math.sin(a) * side * rnd(150, 340) + rnd(-80, 80),
-      rot: s.rot + rnd(-0.5, 0.5), vr: rnd(-9, 9),
+      vx: (Math.cos(a) * side * (perfect ? pSpd : rnd(150, 340)) + (perfect ? 0 : rnd(-80, 80))) * boost * fling,
+      vy: (Math.sin(a) * side * (perfect ? pSpd : rnd(150, 340)) + (perfect ? 0 : rnd(-80, 80))) * boost * fling,
+      rot: s.rot + (perfect ? 0 : rnd(-0.5, 0.5)),
+      vr: (perfect ? -side * pVr : far ? rnd(-15, 15) : rnd(-9, 9)) * (1 + combo * 0.04),
+      damp: far ? 4.2 : 5.5, hopT: far ? 0.9 : 0.38, hopA: far ? 26 : 15,
       t: 0, settled: false, stamped: false, swept: false, sweepDelay: 0,
       // 每片壳的阴影各不相同：完整壳厚重，碎屑轻薄
       shAl: isShell ? rnd(0.3, 0.42) : rnd(0.15, 0.25),
@@ -480,13 +604,27 @@ function crackSeed(s) {
     });
   }
 
+  // 崩开瞬间的碎渣：向上扇形喷出，瞬时消散；连嗑时更多
+  const nCrumb = 4 + ((Math.random() * 3) | 0) + ((combo * 0.5) | 0);
+  for (let c = 0; c < nCrumb; c++) {
+    if (crumbs.length >= MAX_CRUMBS) break;
+    const ca = -Math.PI / 2 + rnd(-0.6, 0.6);
+    const sp = rnd(110, 290) * boost;
+    crumbs.push({
+      x: s.x + rnd(-6, 6), y: s.y + rnd(-6, 6),
+      vx: Math.cos(ca) * sp, vy: Math.sin(ca) * sp,
+      life: rnd(0.28, 0.45), t: 0, size: rnd(1.2, 2.6),
+      col: Math.random() < 0.5 ? '#6e563a' : '#8a6d48',
+    });
+  }
+
   kernels.push({
     type: s.type, variant: s.variant,
     H: s.H * (gold ? 0.72 : 0.55),  // 金仁素材自带光晕边距，画大一点补偿
     x: s.x, y: s.y, rot: s.rot,
     dx: Math.cos(s.rot - Math.PI / 2) * 30,
     dy: Math.sin(s.rot - Math.PI / 2) * 30,
-    t: 0, bites: 0,
+    t: 0, bites: 0, flip: perfect,  // 完美开壳：仁弹更高并翻一圈
   });
 
   if (gold) {
@@ -516,15 +654,48 @@ function renderShell(g, sh) {
   if (sh.kind === 'debris') {
     img = ASSETS[sh.imgKey];
     aspKey = sh.imgKey;
+  } else if (sh.oldShell) {
+    img = shellImg(sh.variant, true);
+    aspKey = sh.variant === 'thin' ? 'shellThinOld' : 'shellFatOld';
   } else {
     img = shellImg(sh.variant);
     aspKey = sh.variant === 'thin' ? 'shellThin' : 'shellFat';
   }
   const w = sh.H * ASP[aspKey];
-  drawShadow(g, sh.x + (sh.shOx ?? 3), sh.y + (sh.shOy ?? 4), w * (sh.shW ?? 0.6), sh.H * (sh.shHr ?? 0.28), sh.shAl ?? 0.35);
+  // 崩开瞬间弹性放大回落（压紧能量的释放感）；被吸进废纸篓时缩小
+  const pop = sh.t < 0.22 ? 1 + 0.25 * Math.exp(-sh.t * 22) * Math.cos(sh.t * 26) : 1;
+  const sc = pop * (sh.swept ? (sh.suckScale ?? 1) : 1);
+  // 高速飞行的壳拖短速度线，只有蓄力猛放/远飞才看得见
+  if (!sh.swept && !sh.settled) {
+    const spd = Math.hypot(sh.vx, sh.vy);
+    const k = clamp((spd - 500) / 1100, 0, 1);
+    if (k > 0.05) {
+      const ux = -sh.vx / spd, uy = -sh.vy / spd;  // 尾迹方向（速度反向）
+      const nx = -uy, ny = ux;
+      const y0 = sh.y - (sh.hop || 0);
+      g.save();
+      g.strokeStyle = '#b08c5e';
+      g.lineCap = 'round';
+      // 中间一长两侧各一短，略带錯位，手绘速度线的感觉
+      for (const [off, lf, al] of [[0, 1, 0.4], [0.34, 0.55, 0.25], [-0.3, 0.5, 0.25]]) {
+        const ox = nx * off * sh.H, oy = ny * off * sh.H;
+        const gap = sh.H * (0.35 + Math.abs(off) * 0.3);
+        const len = k * 64 * lf;
+        g.globalAlpha = al * k;
+        g.lineWidth = 2.4 - Math.abs(off) * 2.5;
+        g.beginPath();
+        g.moveTo(sh.x + ox + ux * gap, y0 + oy + uy * gap);
+        g.lineTo(sh.x + ox + ux * (gap + len), y0 + oy + uy * (gap + len));
+        g.stroke();
+      }
+      g.restore();
+    }
+  }
+  if (!sh.swept) drawShadow(g, sh.x + (sh.shOx ?? 3), sh.y + (sh.shOy ?? 4), w * (sh.shW ?? 0.6), sh.H * (sh.shHr ?? 0.28), sh.shAl ?? 0.35);
   g.save();
   g.translate(sh.x, sh.y - (sh.hop || 0));
   g.rotate(sh.rot);
+  if (sc !== 1) g.scale(sc, sc);
   if (sh.kind === 'shell' && sh.side === -1) g.scale(-1, 1);
   g.drawImage(img, -w / 2, -sh.H / 2, w, sh.H);
   g.restore();
@@ -532,10 +703,67 @@ function renderShell(g, sh) {
 
 /* ================= 废纸篓（插画风） ================= */
 const TZ = 56;
+const TRASH_DUNK_RADIUS = 27;
 let trashHover = 0;
 let trashHoverTarget = 0;
 
 function trashPos() { return { x: W - 46, y: H - 46 }; }
+function startGoldDrop() {
+  const img = goldCounterEl.querySelector('img');
+  const r = img.getBoundingClientRect();
+  const tp = trashPos();
+  // 落点对准这次要镀金的部位：盖子 → 竖纹 → 桶身
+  const ty = goldTier === 0 ? -TZ * 0.26 : goldTier === 1 ? TZ * 0.10 : TZ * 0.20;
+  goldDrop = {
+    t: 0, dur: 0.9,
+    x0: r.left + r.width / 2, y0: r.top + r.height / 2,
+    x1: tp.x, y1: tp.y + ty,
+  };
+  img.style.visibility = 'hidden';  // 图标"离开"计数器落下去
+}
+function landGoldDrop() {
+  const ex = goldDrop.x1, ey = goldDrop.y1;
+  goldDrop = null;
+  goldTier = Math.min(3, goldTier + 1);
+  trashBounce = 1; trashWobble = 0.8;
+  if (goldTier === 3) { goldSweep = 0; goldFlash = 1; }  // 功德圆满：镀金扫光 + 全屏金闪
+  playDing();
+  // 档位越高金星越多
+  const nParts = 10 + goldTier * 8;
+  for (let k = 0; k < nParts; k++) {
+    if (goldParts.length >= MAX_GOLD_PARTS) break;
+    const a = Math.random() * Math.PI * 2, sp = rnd(40, 180 + goldTier * 30);
+    goldParts.push({
+      x: ex, y: ey,
+      vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 30,
+      life: rnd(0.5, 1.1), t: 0, size: rnd(3, 6),
+    });
+  }
+  goldCounterEl.querySelector('img').style.visibility = '';
+  // 升级前显示当前档进度；全金桶后继续显示金瓜子总数
+  goldShown = visibleGoldCount();
+  refreshCounter();
+  if (goldShown > 0) goldCounterEl.animate(
+    [{ transform: 'scale(0.6)', opacity: 0.4 }, { transform: 'scale(1)', opacity: 1 }],
+    { duration: 350, easing: 'cubic-bezier(.2,1.6,.4,1)' }
+  );
+}
+function drawGoldDrop(g) {
+  if (!goldDrop) return;
+  const p = Math.min(1, goldDrop.t / goldDrop.dur);
+  // 横向匀速、纵向重力加速，落下时轻轻摇摆
+  const x = goldDrop.x0 + (goldDrop.x1 - goldDrop.x0) * p;
+  const y = goldDrop.y0 + (goldDrop.y1 - goldDrop.y0) * p * p;
+  const hGold = 26 + 8 * p;
+  const wGold = hGold * ASP.kernelGold;
+  g.save();
+  g.translate(x, y);
+  g.rotate(Math.sin(p * 7) * 0.22);
+  g.shadowColor = 'rgba(255,205,90,0.7)';
+  g.shadowBlur = 14;
+  g.drawImage(ASSETS.kernelGold, -wGold / 2, -hGold / 2, wGold, hGold);
+  g.restore();
+}
 function trashHitTest(px, py) {
   const tp = trashPos();
   return Math.abs(px - tp.x) < 34 && Math.abs(py - tp.y) < 34;
@@ -543,58 +771,132 @@ function trashHitTest(px, py) {
 function drawTrash(g) {
   const tp = trashPos();
   const bounce = trashBounce > 0 ? Math.sin(trashBounce * 16) * 5 * trashBounce : 0;
-  const lid = trashHover;
+  const lid = Math.max(trashHover, sweepLid);
   g.save();
   g.translate(tp.x, tp.y + bounce);
+  if (trashWobble > 0) {
+    const wob = Math.sin(trashWobble * 22) * 0.15 * trashWobble;
+    g.translate(0, TZ * 0.48); g.rotate(wob); g.translate(0, -TZ * 0.48);
+  }
 
   if (needSweep) {
     g.shadowColor = 'rgba(160,110,40,0.55)';
     g.shadowBlur = 16;
+  } else if (goldTier >= 3) {
+    g.shadowColor = `rgba(255,205,90,${(0.35 + 0.4 * trashShine).toFixed(3)})`;
+    g.shadowBlur = 12 + 12 * trashShine;
   }
 
-  // 桶身
-  g.fillStyle = '#9e7e58';
-  g.beginPath();
-  g.moveTo(-TZ * 0.30, -TZ * 0.18);
-  g.lineTo(-TZ * 0.24, TZ * 0.42);
-  g.quadraticCurveTo(-TZ * 0.21, TZ * 0.48, -TZ * 0.12, TZ * 0.48);
-  g.lineTo(TZ * 0.12, TZ * 0.48);
-  g.quadraticCurveTo(TZ * 0.21, TZ * 0.48, TZ * 0.24, TZ * 0.42);
-  g.lineTo(TZ * 0.30, -TZ * 0.18);
-  g.closePath();
-  g.fill();
-
-  // 竖纹
-  g.fillStyle = '#8a6d48';
-  const bars = [-0.12, 0, 0.12];
-  for (const bx of bars) {
+  // 桶身（集满最后一档金瓜子变全金；刚集满时从下往上"镀金"扫上来）
+  const bodyPath = () => {
     g.beginPath();
-    g.moveTo(TZ * (bx - 0.025), -TZ * 0.08);
-    g.lineTo(TZ * (bx - 0.020), TZ * 0.36);
-    g.lineTo(TZ * (bx + 0.020), TZ * 0.36);
-    g.lineTo(TZ * (bx + 0.025), -TZ * 0.08);
+    g.moveTo(-TZ * 0.30, -TZ * 0.18);
+    g.lineTo(-TZ * 0.24, TZ * 0.42);
+    g.quadraticCurveTo(-TZ * 0.21, TZ * 0.48, -TZ * 0.12, TZ * 0.48);
+    g.lineTo(TZ * 0.12, TZ * 0.48);
+    g.quadraticCurveTo(TZ * 0.21, TZ * 0.48, TZ * 0.24, TZ * 0.42);
+    g.lineTo(TZ * 0.30, -TZ * 0.18);
     g.closePath();
-    g.fill();
+  };
+  const goldBodyFill = () => {
+    const bg = g.createLinearGradient(-TZ * 0.30, -TZ * 0.18, TZ * 0.30, TZ * 0.48);
+    bg.addColorStop(0, '#f0c75a');
+    bg.addColorStop(0.35, '#ffe9a8');
+    bg.addColorStop(0.7, '#e8b73f');
+    bg.addColorStop(1, '#c8922a');
+    return bg;
+  };
+  const drawAssetFit = (img, aspKey, bx, by, bw, bh) => {
+    const boxAsp = bw / bh;
+    const asp = ASP[aspKey];
+    const w = asp > boxAsp ? bw : bh * asp;
+    const h = asp > boxAsp ? bw / asp : bh;
+    const x = bx + (bw - w) / 2;
+    const y = by + (bh - h) / 2;
+    g.drawImage(img, x, y, w, h);
+    return { x, y, w, h };
+  };
+  const drawTrashBodyAsset = (progress = 1) => {
+    const box = { x: -TZ * 0.30, y: -TZ * 0.18, w: TZ * 0.60, h: TZ * 0.66 };
+    if (progress >= 1) {
+      drawAssetFit(ASSETS.trashBody, 'trashBody', box.x, box.y, box.w, box.h);
+      return;
+    }
+    const p = clamp(progress, 0, 1);
+    const clipY = box.y + box.h * (1 - p);
+    g.save();
+    g.beginPath();
+    g.rect(box.x, clipY, box.w, box.y + box.h - clipY);
+    g.clip();
+    const r = drawAssetFit(ASSETS.trashBody, 'trashBody', box.x, box.y, box.w, box.h);
+    g.restore();
+    g.fillStyle = 'rgba(255,246,214,0.9)';
+    g.fillRect(r.x + 1, clipY - 1.5, r.w - 2, 3);
+  };
+  const gilding = goldTier >= 3 && goldSweep >= 0;
+  g.fillStyle = '#9e7e58';
+  bodyPath();
+  g.fill();
+  if (goldTier >= 3) drawTrashBodyAsset(gilding ? goldSweep : 1);
+
+  // 竖纹（集满第二档金瓜子变金；全金桶时用深金保持对比）
+  if (goldTier >= 2) {
+    drawAssetFit(ASSETS.trashBars, 'trashBars', -TZ * 0.145, -TZ * 0.08, TZ * 0.29, TZ * 0.44);
+  } else {
+    g.fillStyle = '#8a6d48';
+    const bars = [-0.12, 0, 0.12];
+    for (const bx of bars) {
+      g.beginPath();
+      g.moveTo(TZ * (bx - 0.025), -TZ * 0.08);
+      g.lineTo(TZ * (bx - 0.020), TZ * 0.36);
+      g.lineTo(TZ * (bx + 0.020), TZ * 0.36);
+      g.lineTo(TZ * (bx + 0.025), -TZ * 0.08);
+      g.closePath();
+      g.fill();
+    }
   }
 
   g.shadowColor = 'transparent';
   g.shadowBlur = 0;
 
-  // 盖子（悬停时旋转打开）
+  // 盖子（悬停时旋转打开；集满第一档金瓜子后变成金盖）
   g.save();
   g.translate(TZ * 0.30, -TZ * 0.22);
   g.rotate(lid * 0.35);
   g.translate(-TZ * 0.30, TZ * 0.22);
-  // 盖面
-  g.fillStyle = '#b8956a';
-  g.beginPath();
-  g.roundRect(-TZ * 0.36, -TZ * 0.30, TZ * 0.72, TZ * 0.10, 3);
-  g.fill();
-  // 把手
-  g.fillStyle = '#a68455';
-  g.beginPath();
-  g.roundRect(-TZ * 0.10, -TZ * 0.40, TZ * 0.20, TZ * 0.12, 3);
-  g.fill();
+  if (goldTier >= 1) {
+    g.shadowColor = 'rgba(255,205,90,0.45)';
+    g.shadowBlur = 10;
+  }
+  if (goldTier >= 1) {
+    drawAssetFit(ASSETS.trashLid, 'trashLid', -TZ * 0.36, -TZ * 0.40, TZ * 0.72, TZ * 0.20);
+  } else {
+    g.fillStyle = '#b8956a';
+    g.beginPath();
+    g.roundRect(-TZ * 0.36, -TZ * 0.30, TZ * 0.72, TZ * 0.10, 3);
+    g.fill();
+    g.fillStyle = '#a68455';
+    g.beginPath();
+    g.roundRect(-TZ * 0.10, -TZ * 0.40, TZ * 0.20, TZ * 0.12, 3);
+    g.fill();
+  }
+  g.shadowColor = 'transparent';
+  g.shadowBlur = 0;
+  if (goldTier >= 1) {
+    // 偶尔闪一下的小金星
+    const tw = Math.max(0, Math.sin(now * 1.6)) ** 6;
+    if (tw > 0.05) {
+      g.save();
+      g.globalAlpha = tw;
+      g.translate(TZ * 0.22, -TZ * 0.27);
+      g.rotate(now * 0.8);
+      g.strokeStyle = '#fff3c4'; g.lineWidth = 1.4;
+      g.beginPath();
+      for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2; g.moveTo(0, 0); g.lineTo(Math.cos(a) * 5, Math.sin(a) * 5); }
+      g.stroke();
+      g.restore();
+    }
+  }
   g.restore();
 
   g.restore();
@@ -653,7 +955,7 @@ function drawFish(g) {
   g.restore();
 
   // 悬停久了显示提示
-  const tipA = clamp((fishHoverTime - 0.8) / 0.3, 0, 1);
+  const tipA = clamp((fishHoverTime - 2.0) / 0.3, 0, 1);
   if (tipA > 0.01) {
     const txt = fishMode ? '摸鱼模式开启中：嗑瓜子声已伪装成鼠标声' : '摸鱼模式';
     g.save();
@@ -678,11 +980,23 @@ function sweep() {
   ensureAudio(); playSweep();
   for (const sh of shells) {
     sh.swept = true; sh.settled = false;
-    sh.sweepDelay = (sh.x / W) * 0.22 + rnd(0, 0.06);
-    sh.vx = rnd(850, 1250); sh.vy = rnd(-90, 90); sh.vr = rnd(-12, 12);
+    sh.sweepDelay = rnd(0, 0.35);
+    sh.sweepT = 0; sh.suckScale = 1;
+    sh.vr = rnd(-10, 10);
   }
+  sweepRemain = shells.length;
   lyx.clearRect(0, 0, W, H);
   if (needSweep) { needSweep = false; bagCount = 0; }
+}
+
+let cursorState = '';
+function applyCursor(px, py) {
+  const h = !!hitSeed(px, py) || pressedSeed || trashHitTest(px, py) || bagHitTest(px, py) ||
+            (fishHitTest(px, py) && (fishHover > 0.2 || fishMode));
+  const st = h ? 'pointer' : 'default';
+  if (st === cursorState) return;
+  cursorState = st;
+  cv.style.cursor = st;
 }
 
 /* ================= 输入 ================= */
@@ -706,19 +1020,22 @@ cv.addEventListener('pointerdown', e => {
   if (trashHitTest(e.clientX, e.clientY)) { sweep(); return; }
   if (fishHitTest(e.clientX, e.clientY)) { fishMode = !fishMode; syncBGMVolume(true); fishBounce = 1; return; }
   const s = hitSeed(e.clientX, e.clientY);
-  if (s) { pressedSeed = s; return; }
+  if (s) { pressedSeed = s; pressStartAt = performance.now(); applyCursor(e.clientX, e.clientY); return; }
   if (bagHitTest(e.clientX, e.clientY)) pour();
 });
-window.addEventListener('pointerup', () => { if (pressedSeed) crackSeed(pressedSeed); });
+window.addEventListener('pointerup', e => {
+  if (pressedSeed) {
+    const hold = (performance.now() - pressStartAt) / 1000;
+    const charge = clamp((hold - 0.18) / 1.02, 0, 1);
+    crackSeed(pressedSeed, charge);
+  }
+  applyCursor(e.clientX, e.clientY);
+});
 cv.addEventListener('pointermove', e => {
-  const onTrash = trashHitTest(e.clientX, e.clientY);
-  trashHoverTarget = onTrash ? 1 : 0;
-  const onFish = fishHitTest(e.clientX, e.clientY);
-  fishHoverTarget = onFish ? 1 : 0;
-  const onBag = bagHitTest(e.clientX, e.clientY);
-  bagHoverTarget = onBag ? 1 : 0;
-  const h = !!hitSeed(e.clientX, e.clientY) || onBag || onTrash || onFish;
-  if (h !== hoverPtr) { hoverPtr = h; cv.style.cursor = h ? 'pointer' : 'default'; }
+  trashHoverTarget = trashHitTest(e.clientX, e.clientY) ? 1 : 0;
+  fishHoverTarget = fishHitTest(e.clientX, e.clientY) ? 1 : 0;
+  bagHoverTarget = bagHitTest(e.clientX, e.clientY) ? 1 : 0;
+  applyCursor(e.clientX, e.clientY);
 });
 window.addEventListener('blur', () => { pressedSeed = null; });
 
@@ -727,7 +1044,18 @@ let lastBagHint = -2;  // 首次提示提前：加载约 1s 后就晃袋子
 function update(dt) {
   now += dt;
   updateBGM();
-  if (pourQueue > 0) { pourTimer -= dt; if (pourTimer <= 0) { spawnSeed(); pourQueue--; pourTimer = 0.05; } }
+  if (pourQueue > 0) {
+    pourTimer -= dt;
+    if (pourTimer <= 0) {
+      const forceGold = firstPourGoldCountdown === 0;
+      const inFirstBatch = firstBatchRemain > 0;
+      if (inFirstBatch) firstBatchRemain--;
+      spawnSeed(forceGold ? 'gold' : inFirstBatch ? 'nogold' : null);
+      if (firstPourGoldCountdown >= 0) firstPourGoldCountdown = forceGold ? -1 : firstPourGoldCountdown - 1;
+      pourQueue--;
+      pourTimer = 0.05;
+    }
+  }
   if (BAG.wig > 0) BAG.wig = Math.max(0, BAG.wig - dt * 2.2);
   if (!seeds.length && !pourQueue && !needSweep && now - lastBagHint > 3) { lastBagHint = now; BAG.wig = 0.7; }
 
@@ -740,28 +1068,88 @@ function update(dt) {
       s.drawRot = s.rot + s.spin * (1 - (1 - p) * (1 - p)) - s.spin;
       if (p >= 1) { s.state = 'idle'; s.hop = 0; }
     }
-    s.pressT += ((pressedSeed === s ? 1 : 0) - s.pressT) * Math.min(1, dt * 18);
+    const chargeT = pressedSeed === s ? 1 + clamp((performance.now() - pressStartAt) / 1200, 0, 1) * 0.6 : 0;
+    s.pressT += (chargeT - s.pressT) * Math.min(1, dt * 18);
+    if (s.kickT > 0) {
+      s.kickT -= dt;
+      // 被撞飞的滑行：0.3s 急速冲出再减速停下
+      if (s.kSlide < 1) {
+        s.kSlide = Math.min(1, s.kSlide + dt / 0.3);
+        const e = easeOutCubic(s.kSlide);
+        s.x = lerp(s.kx0, s.kx1, e);
+        s.y = lerp(s.ky0, s.ky1, e);
+      }
+    }
   }
 
   for (let i = shells.length - 1; i >= 0; i--) {
     const sh = shells[i];
     if (sh.swept) {
       if (sh.sweepDelay > 0) { sh.sweepDelay -= dt; continue; }
-      sh.x += sh.vx * dt; sh.y += sh.vy * dt; sh.rot += sh.vr * dt;
-      if (sh.x > W + 120) shells.splice(i, 1);
+      // 加速飞向桶口，接近时缩小被"吸"进去
+      sh.sweepT += dt;
+      const tp = trashPos();
+      const dx = tp.x - sh.x, dy = (tp.y - 16) - sh.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const step = Math.min(d, (180 + sh.sweepT * 1600) * dt);
+      sh.x += dx / d * step; sh.y += dy / d * step;
+      sh.rot += sh.vr * dt;
+      sh.suckScale = clamp(d / 160, 0.08, 1);
+      if (d < 18) {
+        shells.splice(i, 1);
+        if (--sweepRemain <= 0) { sweepRemain = 0; trashBounce = 0.7; }  // 全部进桶，桶弹两下
+      }
       continue;
     }
     if (sh.settled) continue;
     sh.t += dt;
-    sh.hop = Math.sin(Math.PI * Math.min(1, sh.t / 0.38)) * 15;
+    sh.hop = Math.sin(Math.PI * Math.min(1, sh.t / (sh.hopT ?? 0.38))) * (sh.hopA ?? 15);
     sh.x += sh.vx * dt; sh.y += sh.vy * dt; sh.rot += sh.vr * dt;
-    const damp = Math.exp(-5.5 * dt);
+    const damp = Math.exp(-(sh.damp ?? 5.5) * dt);
     sh.vx *= damp; sh.vy *= damp; sh.vr *= damp;
     if (sh.x < 24) { sh.x = 24; sh.vx = Math.abs(sh.vx) * 0.5; }
     if (sh.x > W - 24) { sh.x = W - 24; sh.vx = -Math.abs(sh.vx) * 0.5; }
     if (sh.y < 70) { sh.y = 70; sh.vy = Math.abs(sh.vy) * 0.5; }
     if (sh.y > H - 24) { sh.y = H - 24; sh.vy = -Math.abs(sh.vy) * 0.5; }
-    if (sh.t > 0.38 && Math.hypot(sh.vx, sh.vy) < 10) { sh.settled = true; sh.hop = 0; stampShell(sh); }
+    const shSpd = Math.hypot(sh.vx, sh.vy);
+    // 神投手：飞行中的壳撞到废纸篓 → 反弹 + 晃动 + 开盖吸壳
+    if (shSpd > 60) {
+      const tp = trashPos();
+      const tdx = sh.x - tp.x, tdy = sh.y - (tp.y - 10);
+      if (Math.hypot(tdx, tdy) < TRASH_DUNK_RADIUS) {
+        const nd = Math.hypot(tdx, tdy) || 1;
+        const nx = tdx / nd, ny = tdy / nd;
+        const dot = sh.vx * nx + sh.vy * ny;
+        sh.vx = (sh.vx - 2 * dot * nx) * 0.55;
+        sh.vy = (sh.vy - 2 * dot * ny) * 0.55;
+        sh.x = tp.x + nx * 30; sh.y = (tp.y - 10) + ny * 30;
+        trashWobble = 1;
+        trashBounce = 0.6;
+        playDunk();
+        if (dunkSweepTimer < 0 && sweepRemain <= 0) dunkSweepTimer = 0.9;
+        continue;
+      }
+      // 壳砸中桌上的瓜子，撞得弹一下并被推开少许
+      if (shSpd > 120) {
+        for (const s2 of seeds) {
+          if (s2.state !== 'idle' || s2.kickT > 0) continue;
+          const sdx = s2.x - sh.x, sdy = s2.y - sh.y;
+          const hitR = s2.H * 0.32;
+          if (sdx * sdx + sdy * sdy < hitR * hitR) {
+            const nd = Math.min(320, shSpd * 0.34);
+            const na = Math.atan2(sh.vy, sh.vx);
+            const p = safeSeedSpot(s2.x + Math.cos(na) * nd, s2.y + Math.sin(na) * nd, s2.H);
+            // 不瞬移：记下起点终点，滑行过去（见 update 里的 kSlide）
+            s2.kx0 = s2.x; s2.ky0 = s2.y; s2.kx1 = p.x; s2.ky1 = p.y; s2.kSlide = 0;
+            s2.tx = p.x; s2.ty = p.y;
+            s2.kickT = 0.85;
+            s2.kickImpact = clamp(shSpd / 850, 0.55, 1.8);
+            s2.kickSpin = (Math.random() < 0.5 ? -1 : 1) * rnd(0.7, 1.6) * s2.kickImpact;
+          }
+        }
+      }
+    }
+    if (sh.t > (sh.hopT ?? 0.38) && shSpd < 10) { sh.settled = true; sh.hop = 0; stampShell(sh); }
   }
 
   for (let i = kernels.length - 1; i >= 0; i--) {
@@ -769,15 +1157,31 @@ function update(dt) {
     k.t += dt;
     if (k.type === 'gold') {
       // 发光停留 1.5s 后飞向右上角计数，0.8s 到达
-      if (k.t > 2.3) {
-        kernels.splice(i, 1);
-        goldShown = goldN;
+      // 在淡出过半时触发计数器弹跳（视觉上金仁"融入"计数器）
+      if (!k.counted && k.t > 2.1) {
+        k.counted = true;
+        goldShown = visibleGoldCount();  // 升级前显示当前档进度；全金桶后从 0 重新计数
         refreshCounter();
         goldCounterEl.animate(
           [{ transform: 'scale(1.5)' }, { transform: 'scale(1)' }],
-          { duration: 280, easing: 'ease-out' }
+          { duration: 300, easing: 'cubic-bezier(.2,1.6,.4,1)' }
         );
+        if (goldTier < GOLD_TIER_GOALS.length && goldN >= GOLD_TIER_GOALS[goldTier] && !goldDrop && goldDropDelay < 0) goldDropDelay = 0.7;
+        // 功德圆满后每颗金瓜子入账，金桶都闪一下金光以示"收到"
+        if (goldTier >= 3) {
+          trashShine = 1;
+          const tp = trashPos();
+          for (let c = 0; c < 6; c++) {
+            const a = Math.random() * Math.PI * 2, sp = rnd(30, 120);
+            if (goldParts.length >= MAX_GOLD_PARTS) break;
+            goldParts.push({
+              x: tp.x, y: tp.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 30,
+              life: rnd(0.4, 0.9), t: 0, size: rnd(2.5, 5),
+            });
+          }
+        }
       }
+      if (k.t > 2.3) { kernels.splice(i, 1); }
       continue;
     }
     // 普通仁：停留后被分两口吃掉
@@ -787,12 +1191,14 @@ function update(dt) {
       k.bites = stage;
       const p = Math.min(1, k.t / 0.4);
       const cx = k.x + k.dx * p, cy = k.y + k.dy * p;
-      for (let c = 0; c < 3; c++)
+      for (let c = 0; c < 3; c++) {
+        if (crumbs.length >= MAX_CRUMBS) break;
         crumbs.push({
           x: cx + rnd(-10, 10), y: cy + rnd(-10, 10),
           vx: rnd(-70, 70), vy: rnd(-80, 10),
           life: rnd(0.3, 0.5), t: 0, size: rnd(1.5, 3),
         });
+      }
     }
     if (stage >= 2) kernels.splice(i, 1);
   }
@@ -811,8 +1217,26 @@ function update(dt) {
   }
   if (shake.t > 0) shake.t -= dt;
   if (trashBounce > 0) trashBounce = Math.max(0, trashBounce - dt * 1.8);
+  if (trashWobble > 0) trashWobble = Math.max(0, trashWobble - dt * 2.2);
+  if (dunkSweepTimer >= 0) {
+    dunkSweepTimer -= dt;
+    if (dunkSweepTimer < 0) { dunkSweepTimer = -1; sweep(); }
+  }
+  if (goldDropDelay >= 0) {
+    goldDropDelay -= dt;
+    if (goldDropDelay < 0) startGoldDrop();
+  }
+  if (goldDrop) {
+    goldDrop.t += dt;
+    if (goldDrop.t >= goldDrop.dur) landGoldDrop();
+  }
+  if (goldSweep >= 0) { goldSweep += dt / 0.9; if (goldSweep >= 1) goldSweep = -1; }
+  if (goldFlash > 0) goldFlash = Math.max(0, goldFlash - dt * 1.6);
+  if (trashShine > 0) trashShine = Math.max(0, trashShine - dt * 1.5);
   trashHover += (trashHoverTarget - trashHover) * Math.min(1, dt * 10);
-  fishHover += (fishHoverTarget - fishHover) * Math.min(1, dt * 8);
+  sweepLid += (((sweepRemain > 0 || dunkSweepTimer > 0) ? 1 : 0) - sweepLid) * Math.min(1, dt * 8);
+  // 图标需悬停 0.6s 才浮现，避免鼠标扫过就暴露
+  fishHover += (((fishHoverTarget && fishHoverTime > 0.6) ? 1 : 0) - fishHover) * Math.min(1, dt * 8);
   fishHoverTime = fishHoverTarget ? fishHoverTime + dt : 0;
   if (fishBounce > 0) fishBounce = Math.max(0, fishBounce - dt * 1.8);
   bagHover += (bagHoverTarget - bagHover) * Math.min(1, dt * 8);
@@ -839,7 +1263,7 @@ function render() {
   for (const k of kernels) {
     const p = Math.min(1, k.t / 0.4);
     const x = k.x + k.dx * easeOutCubic(p);
-    const y = k.y + k.dy * easeOutCubic(p) - Math.sin(Math.PI * Math.min(1, k.t / 0.5)) * 22;
+    const y = k.y + k.dy * easeOutCubic(p) - Math.sin(Math.PI * Math.min(1, k.t / 0.5)) * (k.flip ? 46 : 22);
     const sc = k.t < 0.16 ? easeOutCubic(k.t / 0.16) * 1.15 : Math.max(1, 1.15 - (k.t - 0.16) * 0.5);
     const kImg = kernelImg(k.type, k.variant);
     const kAsp = k.type === 'gold' ? ASP.kernelGold : ASP[k.variant === 'thin' ? 'kernelThin' : 'kernelFat'];
@@ -847,20 +1271,31 @@ function render() {
 
     if (k.type === 'gold') {
       // 飞向右上角：三次缓动沿贝塞尔弧线，光晕渐隐
-      let gx = x, gy = y, gsc = sc, grot = k.rot, glowMul = 1;
+      let gx = x, gy = y, gsc = sc, grot = k.rot, glowMul = 1, bodyAlpha = 1;
       if (k.t > 1.5) {
+        // 冻结飞行起点，避免弹跳震荡导致曲线逐帧抖动
+        if (!k.flyX) { k.flyX = x; k.flyY = y; k.flySc = sc; k.flyRot = k.rot; }
         const f = Math.min(1, (k.t - 1.5) / 0.8);
         const e = f < 0.5 ? 4 * f * f * f : 1 - Math.pow(-2 * f + 2, 3) / 2;
         const tx = W - 70, ty = 32;
-        const mx = (x + tx) / 2, my = Math.min(y, ty) - 90;
+        const mx = (k.flyX + tx) / 2, my = Math.min(k.flyY, ty) - 90;
         const u = 1 - e;
-        gx = u * u * x + 2 * u * e * mx + e * e * tx;
-        gy = u * u * y + 2 * u * e * my + e * e * ty;
-        gsc = lerp(sc, 30 / k.H, e);
-        grot = k.rot * (1 - e);
-        glowMul = 1 - f * 0.75;
+        gx = u * u * k.flyX + 2 * u * e * mx + e * e * tx;
+        gy = u * u * k.flyY + 2 * u * e * my + e * e * ty;
+        gsc = lerp(k.flySc, 0.15, e);
+        grot = k.flyRot * (1 - e);
+        // 最后 30% 淡出，到达时已完全透明，避免消失跳变
+        const fade = f > 0.7 ? 1 - (f - 0.7) / 0.3 : 1;
+        glowMul = (1 - f * 0.75) * fade;
+        bodyAlpha = fade;
       } else {
         drawShadow(ctx, x, y + 6, kw * 0.55, k.H * 0.3, 0.25);
+        // 落桌后弹跳两下并左右晃动（阻尼震荡），影子留在地面
+        const lt = k.t - 0.5;
+        if (lt > 0) {
+          gy -= Math.abs(Math.sin(lt * 11)) * 7 * Math.exp(-lt * 3);
+          grot += Math.sin(lt * 13) * 0.15 * Math.exp(-lt * 2.2);
+        }
       }
       // 柔和渐变光晕
       const ga = (0.3 + 0.1 * Math.sin(now * 3.2)) * glowMul;
@@ -872,9 +1307,11 @@ function render() {
       ctx.fillStyle = rg;
       ctx.beginPath(); ctx.arc(gx, gy, gr, 0, Math.PI * 2); ctx.fill();
       ctx.save();
+      ctx.globalAlpha = bodyAlpha;
       ctx.translate(gx, gy); ctx.rotate(grot); ctx.scale(gsc, gsc);
       ctx.drawImage(kImg, -kw / 2, -k.H / 2, kw, k.H);
       ctx.restore();
+      ctx.globalAlpha = 1;
       continue;
     }
 
@@ -882,7 +1319,8 @@ function render() {
     const bites = k.bites;
     drawShadow(ctx, x, y + 6, kw * 0.6 * (1 - bites * 0.35), k.H * 0.32 * (1 - bites * 0.3), 0.28);
     ctx.save();
-    ctx.translate(x, y); ctx.rotate(k.rot); ctx.scale(sc, sc);
+    const flipRot = k.flip ? Math.PI * 2 * easeOutCubic(Math.min(1, k.t / 0.55)) : 0;
+    ctx.translate(x, y); ctx.rotate(k.rot + flipRot); ctx.scale(sc, sc);
     if (bites > 0) {
       const bitY = bites === 1 ? -k.H * 0.05 : k.H * 0.25;
       const bw = kw * 1.3;
@@ -903,7 +1341,7 @@ function render() {
   for (const c of crumbs) {
     const f = 1 - c.t / c.life;
     ctx.globalAlpha = f * 0.9;
-    ctx.fillStyle = '#d9bc8a';
+    ctx.fillStyle = c.col || '#d9bc8a';
     ctx.beginPath(); ctx.arc(c.x, c.y, c.size * f, 0, Math.PI * 2); ctx.fill();
   }
   ctx.globalAlpha = 1;
@@ -914,14 +1352,22 @@ function render() {
     const img = SPRITES[aspK];
     const w = s.H * ASP[aspK];
     const idle = s.state === 'idle';
-    const hop = (s.hop || 0) + (idle ? Math.sin(now * s.wspd * 1.6 + s.phase) * 1.6 : 0);
-    const wobble = idle ? Math.sin(now * s.wspd + s.phase * 1.7) * 0.022 : 0;
-    const shAl = s.state === 'fly' ? 0.2 + 0.35 * Math.min(1, s.t / s.dur) : 0.5;
-    drawShadow(ctx, s.x + 3, s.y + 5, w * 0.55, s.H * 0.38, shAl);
+    let hop = (s.hop || 0) + (idle ? Math.sin(now * s.wspd * 1.6 + s.phase) * 1.6 : 0);
+    let wobble = idle ? Math.sin(now * s.wspd + s.phase * 1.7) * 0.022 : 0;
+    // 被飞壳砸中：弹两下并晃动，逐渐平息
+    if (s.kickT > 0) {
+      const kp = 1 - s.kickT / 0.85;
+      const impact = s.kickImpact || 1;
+      hop += Math.abs(Math.sin(kp * Math.PI * 2.4)) * 64 * impact * (1 - kp);
+      wobble += Math.sin(kp * 16) * 0.56 * impact * (1 - kp) + (s.kickSpin || 0) * (1 - kp);
+    }
+    const pr = s.pressT;
+    // 按压时影子变大变深：压扁=更贴桌面的重量感
+    const shAl = s.state === 'fly' ? 0.2 + 0.35 * Math.min(1, s.t / s.dur) : 0.5 + 0.18 * pr;
+    drawShadow(ctx, s.x + 3, s.y + 5, w * (0.55 + 0.07 * pr), s.H * (0.38 + 0.06 * pr), shAl);
     ctx.save();
     ctx.translate(s.x, s.y - hop);
     ctx.rotate((s.state === 'fly' ? (s.drawRot ?? s.rot) : s.rot) + wobble);
-    const pr = s.pressT;
     ctx.scale(1 + 0.08 * pr, 1 - 0.12 * pr);
     if (s.state === 'fly') { const p = Math.min(1, s.t / s.dur); ctx.scale(0.6 + 0.4 * easeOutCubic(p), 0.6 + 0.4 * easeOutCubic(p)); }
     ctx.drawImage(img, -w / 2, -s.H / 2, w, s.H);
@@ -945,7 +1391,12 @@ function render() {
   ctx.restore();
 
   drawTrash(ctx);
+  drawGoldDrop(ctx);
   drawFish(ctx);
+  if (goldFlash > 0) {
+    ctx.fillStyle = `rgba(255,214,110,${(0.22 * goldFlash).toFixed(3)})`;
+    ctx.fillRect(0, 0, W, H);
+  }
   ctx.fillStyle = noisePat; ctx.fillRect(0, 0, W, H);
   const t = hourTint();
   if (t) { ctx.fillStyle = t; ctx.fillRect(0, 0, W, H); }
@@ -969,8 +1420,10 @@ function resize() {
   noisePat = ctx.createPattern(noiseC, 'repeat');
   bagMetrics();
   for (const s of seeds) {
-    s.tx = clamp(s.tx, 60, W - 60); s.ty = clamp(s.ty, 100, H - 60);
-    s.x = clamp(s.x, 60, W - 60); s.y = clamp(s.y, 100, H - 60);
+    const tp = safeSeedSpot(s.tx, s.ty, s.H);
+    const p = safeSeedSpot(s.x, s.y, s.H);
+    s.tx = tp.x; s.ty = tp.y;
+    s.x = p.x; s.y = p.y;
   }
   for (const sh of shells) { sh.x = clamp(sh.x, 24, W - 24); sh.y = clamp(sh.y, 70, H - 24); }
   paintBG(); restamp();
@@ -979,6 +1432,12 @@ window.addEventListener('resize', resize);
 resize();
 startBGM();
 requestAnimationFrame(loop);
+
+/* ?gold1 / ?gold4 / ?gold8 — 快速测试三档金桶（都差一颗触发下一档）；?gold9 — 直接全金桶 */
+if (location.search.includes('gold9')) { goldTier = 3; goldN = 9; }
+else if (location.search.includes('gold8')) { goldTier = 2; goldN = 8; goldShown = 3; refreshCounter(); }
+else if (location.search.includes('gold4')) { goldTier = 1; goldN = 4; goldShown = 2; refreshCounter(); }
+else if (location.search.includes('gold1')) { goldN = 1; goldShown = 1; refreshCounter(); }
 
 /* 冒烟测试 */
 if (location.search.includes('autotest')) {
