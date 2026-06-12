@@ -19,7 +19,7 @@
 </style>
 </head>
 <body>
-<div id="loading">加载中…</div>
+<div id="loading">加载中 0%</div>
 <canvas id="c"></canvas>
 <div id="ui">
   <div id="counter" style="display:none;">0</div>
@@ -42,6 +42,10 @@ const IMG_SRC = {
 const loadingEl = document.getElementById('loading');
 const imgEntries = Object.entries(IMG_SRC);
 let loadedImgs = 0;
+function updateLoadingProgress() {
+  const pct = Math.round((loadedImgs / imgEntries.length) * 100);
+  loadingEl.textContent = '加载中 ' + pct + '%';
+}
 Promise.all(Object.entries(IMG_SRC).map(([k, src]) =>
   new Promise((res, rej) => {
     const img = new Image();
@@ -50,7 +54,7 @@ Promise.all(Object.entries(IMG_SRC).map(([k, src]) =>
       clearTimeout(timer);
       ASSETS[k] = img;
       loadedImgs++;
-      loadingEl.textContent = '加载中 ' + loadedImgs + '/' + imgEntries.length;
+      updateLoadingProgress();
       res();
     };
     img.onerror = () => rej(src);
@@ -228,9 +232,12 @@ const BGM_FADE_SEC = 4;
 function unlockAudio() {
   if (audioUnlocked) return;
   audioUnlocked = true;
-  [...crackSounds, ...eatSounds, goldSound].forEach(a => {
+  [...crackSounds, ...eatSounds, goldSound, pourSound, sweepSound, dunkSound].forEach(a => {
     a.volume = 0;
-    a.play().then(() => { a.pause(); a.currentTime = 0; a.volume = a._vol; }).catch(() => {});
+    a.play().then(() => {
+      // 预热期间若已被真正播放（音量被还原），不要打断它
+      if (a.volume === 0) { a.pause(); a.currentTime = 0; a.volume = a._vol; }
+    }).catch(() => { a.volume = a._vol; });
   });
   startBGM();
 }
@@ -363,6 +370,7 @@ function playDing() {
 }
 function playPour() {
   if (muted || fishMode) return;
+  pourSound.volume = pourSound._vol;
   pourSound.currentTime = 0;
   pourSound.play().catch(() => {});
 }
