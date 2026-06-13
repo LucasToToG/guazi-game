@@ -16,6 +16,18 @@
   #goldCounter img{height:24px;display:block;}
   #loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
     background:#e9e2d2;z-index:100;font:500 18px/1 "PingFang SC","Microsoft YaHei",sans-serif;color:#6b513a;}
+  #milestone{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;
+    background:rgba(60,42,24,.28);opacity:0;transition:opacity .35s ease;pointer-events:none;}
+  #milestone.show{opacity:1;}
+  #mcard{background:#f5edda;border-radius:22px;padding:34px 46px;text-align:center;
+    box-shadow:0 18px 50px rgba(60,42,24,.28);border:2px solid rgba(210,61,46,.22);
+    transform:scale(.85);transition:transform .4s cubic-bezier(.2,1.5,.4,1);max-width:78vw;}
+  #milestone.show #mcard{transform:scale(1);}
+  #mcard .mrow{display:flex;align-items:baseline;justify-content:center;gap:7px;color:#6b513a;
+    font:500 16px/1 "PingFang SC","Microsoft YaHei",sans-serif;margin:8px 0;}
+  #mcard .mrow b{font:700 38px/1 "Marker Felt","Chalkboard SE",sans-serif;color:#d23d2e;}
+  #mcard .mrow.gold b{color:#c8922a;}
+  #mcard .mrow img{height:26px;vertical-align:middle;}
 </style>
 </head>
 <body>
@@ -25,6 +37,10 @@
   <div id="counter" style="display:none;">0</div>
   <div id="goldCounter" style="display:none;"><img src="web-assets/kernel-gold.png" alt="金瓜子"><span id="goldNum">0</span></div>
 </div>
+<div id="milestone"><div id="mcard">
+  <div class="mrow">已经嗑了 <b id="msSeeds">0</b> 颗瓜子</div>
+  <div class="mrow gold">其中 <img src="web-assets/kernel-gold.png" alt="金瓜子"> <b id="msGold">0</b> 颗金瓜子</div>
+</div></div>
 <script>
 'use strict';
 
@@ -160,6 +176,8 @@ let pourQueue = 0, pourTimer = 0;
 let pourRounds = 0, firstPourGoldCountdown = -1, firstBatchRemain = 0;
 let shake = { t: 0, mag: 0 };
 let combo = 0, lastCrackAt = -9;  // 连嗑：1.2s 内连续嗑则升档，纯表现不计分
+let chainCount = 0, chainX = 0, chainY = 0;      // 单次点击引发的连锁颗数
+let comboShowN = 0, comboShowT = 0, comboX = 0, comboY = 0, comboPop = 0;
 let bigBangUntil = -9;  // 全爆彩蛋：窗口期内连锁不限代数不限数量，全桌炸开
 const BIGBANG_TEST = location.search.includes('bigbang');
 // 首次保底：没见过全爆的玩家，前 100 颗内随机一颗必触发，之后回归低概率
@@ -170,8 +188,29 @@ const bangDebutAt = 30 + ((Math.random() * 70) | 0);  // 30~99，随机化避免
 let chargeHintDone = false;
 try { chargeHintDone = localStorage.getItem('guazi_hint_charge') === '1'; } catch (e) {}
 let chargeHintT = -1;             // >0 表示蓄力提示气泡显示中
-let bangMsg = '', bangMsgT = 0;   // 全爆落幕的"你引爆了 N 颗"
+let bangMsg = '', bangMsgT = 0;   // 全爆落幕的 COMBO N
 let bangTotalAt = 0;
+let bangBest = false;             // 这一炸是否刷新了最高纪录
+let bestCombo = 0;                // 历史最高 COMBO（持久化，只在全爆时露面）
+try { bestCombo = +localStorage.getItem('guazi_best_combo') || 0; } catch (e) {}
+let autoPourAt = -1;              // 桌面嗑空后自动续杯的倒计时
+// 里程碑：按本次会话累计（刷新归零），每满 88 颗弹一次
+const MILESTONE_STEP = 88;        // 约 2~3 分钟
+let nextMilestone = MILESTONE_STEP, milestoneT = 0;
+const msEl = document.getElementById('milestone');
+const msSeedsEl = document.getElementById('msSeeds');
+const msGoldEl = document.getElementById('msGold');
+function showMilestone() {
+  msSeedsEl.textContent = total;
+  msGoldEl.textContent = goldN;
+  msEl.style.display = 'flex';
+  requestAnimationFrame(() => msEl.classList.add('show'));
+  milestoneT = 4.5;
+}
+function hideMilestone() {
+  msEl.classList.remove('show');
+  setTimeout(() => { if (milestoneT <= 0) msEl.style.display = 'none'; }, 400);
+}
 let mouseX = 0, mouseY = 0;
 const confetti = [];  // 全爆清屏后的彩带
 const MAX_CONFETTI = 130;
@@ -194,10 +233,7 @@ let dunkSweepTimer = -1;
 const GOLD_TIER_GOALS = [10, 20, 30];
 let goldTier = 0;
 const GOLD_TEST = location.search.includes('gold');  // 测试参数模式下不读写存档
-if (!GOLD_TEST) try {
-  goldN = +localStorage.getItem('guazi_gold_n') || 0;
-  goldTier = +localStorage.getItem('guazi_gold_tier') || 0;
-} catch (e) {}
+// 金瓜子进度每次刷新页面从 0 开始，不再持久化（每次开局都是新的收集旅程）
 let goldDrop = null;
 let goldDropDelay = -1;
 let goldSweep = -1;   // ≥0 表示第三档落地后"从下往上镀金"扫光播放中
@@ -446,7 +482,8 @@ const BAG = { wig: 0 };
 let bagDrawH = 500, bagDrawW = 294;
 let bagHover = 0, bagHoverTarget = 0;
 function bagMetrics() {
-  bagDrawH = Math.min(520, H * 0.68);
+  const mobile = W < 600;
+  bagDrawH = Math.min(mobile ? 260 : 520, H * (mobile ? 0.34 : 0.68));
   bagDrawW = bagDrawH * ASP.bag;
 }
 function drawBag(g) {
@@ -582,9 +619,18 @@ function crackSeed(s, charge = 0, gen = 0) {
   const gold = s.type === 'gold';
   combo = now - lastCrackAt < 1.2 ? Math.min(8, combo + 1) : 0;
   lastCrackAt = now;
-  // 全爆彩蛋：0.8% 概率引爆全桌连锁；首次保底前 100 颗内必出（?bigbang 必触发）
+  // 连锁连击：一次点击引发的自动连锁，连锁满 5 颗才在起爆点冒出 COMBO ×N
+  // （手动逐颗点击不算；全爆有专属结算，期间不重复显示）
+  if (gen === 0) { chainCount = 1; chainX = s.x; chainY = s.y; }
+  else {
+    chainCount++;
+    if (chainCount >= 5 && now >= bigBangUntil) {
+      comboShowN = chainCount; comboShowT = 1.1; comboX = chainX; comboY = chainY; comboPop = 1;
+    }
+  }
+  // 全爆彩蛋：必须蓄力触发，单击不会引爆；首次保底前 100 颗内必出（?bigbang 必触发）
   const bangP = BIGBANG_TEST || (!bangSeen && total >= bangDebutAt) ? 1 : 0.008;
-  if (gen === 0 && seeds.length >= 15 && Math.random() < bangP) {
+  if (gen === 0 && charge > 0.5 && seeds.length >= 15 && Math.random() < bangP) {
     bangSeen = true;
     if (!BIGBANG_TEST) try { localStorage.setItem('guazi_bang_seen', '1'); } catch (e) {}
     bigBangUntil = now + 4;
@@ -701,9 +747,13 @@ function crackSeed(s, charge = 0, gen = 0) {
       });
     }
     goldN++;
-    if (!GOLD_TEST) try { localStorage.setItem('guazi_gold_n', goldN); } catch (e) {}
   }
   total++; bagCount++;
+  // 里程碑：本次会话每满 88 颗弹一次小结（全爆庆祝/已有卡时让位）
+  if (total >= nextMilestone && milestoneT <= 0 && bangMsgT <= 0 && now >= bigBangUntil) {
+    nextMilestone += MILESTONE_STEP;
+    showMilestone();
+  }
   refreshCounter();
   // 嗑到 25 颗还没用过蓄力，软提示一次
   if (!chargeHintDone && chargeHintT < 0 && total === 25) chargeHintT = 7;
@@ -792,7 +842,6 @@ function landGoldDrop() {
   const ex = goldDrop.x1, ey = goldDrop.y1;
   goldDrop = null;
   goldTier = Math.min(3, goldTier + 1);
-  if (!GOLD_TEST) try { localStorage.setItem('guazi_gold_tier', goldTier); } catch (e) {}
   trashBounce = 1; trashWobble = 0.8;
   if (goldTier === 3) { goldSweep = 0; goldFlash = 1; }  // 功德圆满：镀金扫光 + 全屏金闪
   playDing();
@@ -1084,6 +1133,39 @@ function drawBangMsg(g) {
   g.lineWidth = 10;
   g.strokeText(bangMsg, 0, 28);
   g.fillText(bangMsg, 0, 28);
+  // 最高 COMBO 纪录：只在全爆这一刻露面，刷新时给个"新纪录"高光
+  g.font = `700 22px ${ff}`;
+  g.lineWidth = 5;
+  const rec = bangBest ? '★ 新纪录 ★' : '最高 ' + bestCombo;
+  g.strokeText(rec, 0, 92);
+  g.fillStyle = bangBest ? '#c8922a' : 'rgba(107,81,58,.7)';
+  g.fillText(rec, 0, 92);
+  g.restore();
+}
+// 连击 ≥5：在最后一颗被嗑开的位置上方冒出 COMBO ×N，随连击数升温（颜色转金），快速淡出
+function drawCombo(g) {
+  if (comboShowT <= 0) return;
+  const a = clamp(comboShowT / 0.35, 0, 1);
+  const pop = 1 + comboPop * 0.5;                 // 每次 +1 弹一下
+  const hot = clamp((comboShowN - 5) / 10, 0, 1);  // 越连越热，红→金
+  const col = `rgb(${210 + (hot * 30) | 0},${61 + (hot * 85) | 0},${46 - (hot * 4) | 0})`;
+  const ff = '"Marker Felt","Chalkboard SE","Comic Sans MS",cursive';
+  const y = clamp(comboY - 46, 40, H - 20);
+  const x = clamp(comboX, 70, W - 70);
+  g.save();
+  g.globalAlpha = a;
+  g.translate(x, y);
+  g.scale(pop, pop);
+  g.rotate(-0.05);
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.lineJoin = 'round'; g.lineWidth = 5;
+  g.strokeStyle = 'rgba(245,237,218,0.92)';
+  g.fillStyle = col;
+  g.font = `700 20px ${ff}`;
+  g.strokeText('COMBO', -4, -16); g.fillText('COMBO', -4, -16);
+  g.font = `700 40px ${ff}`;
+  g.lineWidth = 7;
+  g.strokeText('×' + comboShowN, 0, 12); g.fillText('×' + comboShowN, 0, 12);
   g.restore();
 }
 /* ================= 扫一扫 ================= */
@@ -1182,10 +1264,18 @@ function update(dt) {
     }
   }
   if (BAG.wig > 0) BAG.wig = Math.max(0, BAG.wig - dt * 2.2);
+  const tableEmpty = !seeds.length && !pourQueue && !needSweep;
   // 首次进入（还没倒过瓜子）袋子晃得更勤更用力，代替文字引导
-  if (!seeds.length && !pourQueue && !needSweep && now - lastBagHint > (pourRounds === 0 ? 1.3 : 3)) {
+  if (tableEmpty && pourRounds === 0 && now - lastBagHint > 1.3) {
     lastBagHint = now;
-    BAG.wig = pourRounds === 0 ? 1 : 0.7;
+    BAG.wig = 1;
+  }
+  // 起手后桌面嗑空：包装自动续杯，让人停不下来（避开全爆庆祝与里程碑卡）
+  if (tableEmpty && pourRounds > 0 && bangMsgT <= 0 && !confetti.length && milestoneT <= 0) {
+    if (autoPourAt < 0) autoPourAt = now + 0.7;
+    else if (now >= autoPourAt) { autoPourAt = -1; pour(); }
+  } else {
+    autoPourAt = -1;
   }
 
   for (const s of seeds) {
@@ -1228,6 +1318,8 @@ function update(dt) {
   if (!bangCelebrated && !seeds.length && !pourQueue) {
     bangCelebrated = true;
     bangMsg = total - bangTotalAt;
+    bangBest = bangMsg > bestCombo;          // 是否刷新最高纪录
+    if (bangBest) { bestCombo = bangMsg; try { localStorage.setItem('guazi_best_combo', bestCombo); } catch (e) {} }
     bangMsgT = 4;  // 给录屏的人一个完美的结束帧
     for (let i = 0; i < 110 && confetti.length < MAX_CONFETTI; i++) {
       confetti.push({
@@ -1477,6 +1569,9 @@ function update(dt) {
     }
   }
   if (bangMsgT > 0) bangMsgT -= dt;
+  if (comboShowT > 0) comboShowT -= dt;
+  if (comboPop > 0) comboPop = Math.max(0, comboPop - dt * 4);
+  if (milestoneT > 0) { milestoneT -= dt; if (milestoneT <= 0) hideMilestone(); }
   trashHover += (trashHoverTarget - trashHover) * Math.min(1, dt * 10);
   sweepLid += (((sweepRemain > 0 || dunkSweepTimer > 0) ? 1 : 0) - sweepLid) * Math.min(1, dt * 8);
   // 图标需悬停 0.6s 才浮现，避免鼠标扫过就暴露
@@ -1662,6 +1757,7 @@ function render() {
   drawFish(ctx);
   drawChargeHint(ctx);
   drawBangMsg(ctx);
+  drawCombo(ctx);
   if (goldFlash > 0) {
     ctx.fillStyle = `rgba(255,214,110,${(0.22 * goldFlash).toFixed(3)})`;
     ctx.fillRect(0, 0, W, H);
