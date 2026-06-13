@@ -33,6 +33,10 @@
   #mcard .mrow b{font:700 38px/1 "Marker Felt","Chalkboard SE",sans-serif;color:#d23d2e;}
   #mcard .mrow.gold b{color:#c8922a;}
   #mcard .mrow img{height:26px;vertical-align:middle;}
+  #mcard .mbtn{margin-top:22px;border:none;background:#d23d2e;color:#f5edda;
+    font:700 15px/1 "PingFang SC","Microsoft YaHei",sans-serif;padding:10px 32px;
+    border-radius:20px;cursor:pointer;letter-spacing:1px;pointer-events:auto;}
+  #mcard .mbtn:active{transform:scale(.94);opacity:.85;}
 </style>
 </head>
 <body>
@@ -45,6 +49,7 @@
 <div id="milestone"><div id="mcard">
   <div class="mrow">已经嗑了 <b id="msSeeds">0</b> 颗瓜子</div>
   <div class="mrow gold">其中 <img src="web-assets/kernel-gold.png" alt="金瓜子"> <b id="msGold">0</b> 颗金瓜子</div>
+  <button class="mbtn" id="msBtn">继续嗑</button>
 </div></div>
 <script>
 'use strict';
@@ -97,6 +102,7 @@ const ctx = cv.getContext('2d');
 const bg = document.createElement('canvas'), bgx = bg.getContext('2d');
 const layer = document.createElement('canvas'), lyx = layer.getContext('2d');
 let W = 0, H = 0, DPR = 1;
+let isMobile = false;
 
 /* 噪点纹理 */
 const noiseC = document.createElement('canvas');
@@ -210,13 +216,17 @@ function showMilestone() {
   msSeedsEl.textContent = total;
   msGoldEl.textContent = goldN;
   msEl.style.display = 'flex';
+  msEl.style.pointerEvents = 'auto';
   requestAnimationFrame(() => msEl.classList.add('show'));
-  milestoneT = 4.5;
+  milestoneT = 999;
 }
 function hideMilestone() {
+  milestoneT = 0;
   msEl.classList.remove('show');
-  setTimeout(() => { if (milestoneT <= 0) msEl.style.display = 'none'; }, 400);
+  msEl.style.pointerEvents = 'none';
+  setTimeout(() => { msEl.style.display = 'none'; }, 400);
 }
+document.getElementById('msBtn').addEventListener('click', hideMilestone);
 let mouseX = 0, mouseY = 0;
 const confetti = [];  // 全爆清屏后的彩带
 const MAX_CONFETTI = 130;
@@ -286,7 +296,8 @@ const pourSound = new Audio('音效/倒瓜子.WAV');
 const goldSound = new Audio('音效/金瓜子.WAV');
 const sweepSound = new Audio('音效/清扫声.WAV');
 const dunkSound = new Audio('音效/废纸篓碰撞.WAV');
-const bgmTracks = [new Audio('音效/背景音乐1.mp3'), new Audio('音效/背景音乐2.mp3')];
+const _mobileCheck = window.innerWidth < 600;
+const bgmTracks = _mobileCheck ? [] : [new Audio('音效/背景音乐1.mp3'), new Audio('音效/背景音乐2.mp3')];
 [...crackSounds, ...eatSounds, pourSound, goldSound, sweepSound, dunkSound, ...bgmTracks].forEach(a => { a.preload = 'auto'; a._vol = 1; });
 eatSounds.forEach(a => a._vol = 0.4);
 const BGM_VOLUME = 0;
@@ -342,7 +353,7 @@ function switchBGM() {
   playBGMTrack(bgmIndex, from);
 }
 function startBGM() {
-  if (muted || bgmStarted) return;
+  if (muted || bgmStarted || isMobile) return;
   bgmStarted = true;
   playBGMTrack(bgmIndex);
 }
@@ -1040,10 +1051,12 @@ let fishHover = 0, fishHoverTarget = 0, fishHoverTime = 0, fishBounce = 0;
 
 function fishPos() { return { x: W - 118, y: H - 44 }; }
 function fishHitTest(px, py) {
+  if (isMobile) return false;
   const fp = fishPos();
   return Math.abs(px - fp.x) < 28 && Math.abs(py - fp.y) < 28;
 }
 function drawFish(g) {
+  if (isMobile) return;
   const alpha = Math.max(fishHover, fishMode ? 0.45 : 0);
   if (alpha < 0.01) return;
   const fp = fishPos();
@@ -1653,15 +1666,17 @@ function render() {
           grot += Math.sin(lt * 13) * 0.15 * Math.exp(-lt * 2.2);
         }
       }
-      // 柔和渐变光晕
-      const ga = (0.3 + 0.1 * Math.sin(now * 3.2)) * glowMul;
-      const gr = k.H * gsc * 1.2;
-      const rg = ctx.createRadialGradient(gx, gy, gr * 0.12, gx, gy, gr);
-      rg.addColorStop(0, 'rgba(255,219,120,' + ga.toFixed(3) + ')');
-      rg.addColorStop(0.6, 'rgba(255,219,120,' + (ga * 0.4).toFixed(3) + ')');
-      rg.addColorStop(1, 'rgba(255,219,120,0)');
-      ctx.fillStyle = rg;
-      ctx.beginPath(); ctx.arc(gx, gy, gr, 0, Math.PI * 2); ctx.fill();
+      // 柔和渐变光晕（移动端跳过，省一次 createRadialGradient）
+      if (!isMobile) {
+        const ga = (0.3 + 0.1 * Math.sin(now * 3.2)) * glowMul;
+        const gr = k.H * gsc * 1.2;
+        const rg = ctx.createRadialGradient(gx, gy, gr * 0.12, gx, gy, gr);
+        rg.addColorStop(0, 'rgba(255,219,120,' + ga.toFixed(3) + ')');
+        rg.addColorStop(0.6, 'rgba(255,219,120,' + (ga * 0.4).toFixed(3) + ')');
+        rg.addColorStop(1, 'rgba(255,219,120,0)');
+        ctx.fillStyle = rg;
+        ctx.beginPath(); ctx.arc(gx, gy, gr, 0, Math.PI * 2); ctx.fill();
+      }
       ctx.save();
       ctx.globalAlpha = bodyAlpha;
       ctx.translate(gx, gy); ctx.rotate(grot); ctx.scale(gsc, gsc);
@@ -1779,9 +1794,11 @@ function render() {
     ctx.fillStyle = `rgba(255,214,110,${(0.22 * goldFlash).toFixed(3)})`;
     ctx.fillRect(0, 0, W, H);
   }
-  ctx.fillStyle = noisePat; ctx.fillRect(0, 0, W, H);
-  const t = hourTint();
-  if (t) { ctx.fillStyle = t; ctx.fillRect(0, 0, W, H); }
+  if (!isMobile) {
+    ctx.fillStyle = noisePat; ctx.fillRect(0, 0, W, H);
+    const t = hourTint();
+    if (t) { ctx.fillStyle = t; ctx.fillRect(0, 0, W, H); }
+  }
 }
 
 /* ================= 主循环 ================= */
@@ -1793,8 +1810,9 @@ function loop(ts) {
 }
 
 function resize() {
-  DPR = Math.min(window.devicePixelRatio || 1, 2);
   W = window.innerWidth; H = window.innerHeight;
+  isMobile = W < 600;
+  DPR = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
   for (const [c, g] of [[cv, ctx], [bg, bgx], [layer, lyx]]) {
     c.width = W * DPR; c.height = H * DPR;
     g.setTransform(DPR, 0, 0, DPR, 0, 0);
