@@ -160,6 +160,22 @@ let pourQueue = 0, pourTimer = 0;
 let pourRounds = 0, firstPourGoldCountdown = -1, firstBatchRemain = 0;
 let shake = { t: 0, mag: 0 };
 let combo = 0, lastCrackAt = -9;  // 连嗑：1.2s 内连续嗑则升档，纯表现不计分
+let bigBangUntil = -9;  // 全爆彩蛋：窗口期内连锁不限代数不限数量，全桌炸开
+const BIGBANG_TEST = location.search.includes('bigbang');
+// 首次保底：没见过全爆的玩家，前 100 颗内随机一颗必触发，之后回归低概率
+let bangSeen = false;
+try { bangSeen = localStorage.getItem('guazi_bang_seen') === '1'; } catch (e) {}
+const bangDebutAt = 30 + ((Math.random() * 70) | 0);  // 30~99，随机化避免显得刻意
+// 蓄力软提示（只出现一次，跨会话记住）
+let chargeHintDone = false;
+try { chargeHintDone = localStorage.getItem('guazi_hint_charge') === '1'; } catch (e) {}
+let chargeHintT = -1;             // >0 表示蓄力提示气泡显示中
+let bangMsg = '', bangMsgT = 0;   // 全爆落幕的"你引爆了 N 颗"
+let bangTotalAt = 0;
+let mouseX = 0, mouseY = 0;
+const confetti = [];  // 全爆清屏后的彩带
+const MAX_CONFETTI = 130;
+let bangCelebrated = true;
 let sweepRemain = 0, sweepLid = 0;  // 清扫中剩余壳数 / 清扫时桶盖开合
 let now = 0;
 
@@ -172,10 +188,16 @@ let needSweep = false;
 let trashBounce = 0;
 let trashWobble = 0;
 let dunkSweepTimer = -1;
-// 金瓜子集卡：攒到 2 / 5 / 9 颗，金瓜子落到废纸篓上，桶逐步变金
+// 金瓜子集卡：攒到 10 / 20 / 30 颗，金瓜子落到废纸篓上，桶逐步变金
 // 0 = 普通桶  1 = 金盖  2 = 金盖+金竖纹  3 = 全金桶
-const GOLD_TIER_GOALS = [2, 5, 9];
+// 长线目标（约 900 次嗑击集满），进度持久化，跨会话累积
+const GOLD_TIER_GOALS = [10, 20, 30];
 let goldTier = 0;
+const GOLD_TEST = location.search.includes('gold');  // 测试参数模式下不读写存档
+if (!GOLD_TEST) try {
+  goldN = +localStorage.getItem('guazi_gold_n') || 0;
+  goldTier = +localStorage.getItem('guazi_gold_tier') || 0;
+} catch (e) {}
 let goldDrop = null;
 let goldDropDelay = -1;
 let goldSweep = -1;   // ≥0 表示第三档落地后"从下往上镀金"扫光播放中
@@ -185,7 +207,7 @@ let trashShine = 0;   // 集满后每颗金瓜子入账，金桶闪一下金光
 const counterEl = document.getElementById('counter');
 const goldCounterEl = document.getElementById('goldCounter');
 const goldNumEl = document.getElementById('goldNum');
-let goldShown = goldN;
+let goldShown = visibleGoldCount();  // 恢复存档时显示当前档进度
 let shownTotal = 0;
 function visibleGoldCount() {
   if (goldTier >= GOLD_TIER_GOALS.length) return goldN - GOLD_TIER_GOALS[GOLD_TIER_GOALS.length - 1];
@@ -205,7 +227,10 @@ function refreshCounter() {
   }
   if (goldShown > 0) {
     goldCounterEl.style.display = 'flex';
-    goldNumEl.textContent = goldShown;
+    // 带目标的进度格式（3/10），让收集系统自己解释自己；集满全金桶后只显示数量
+    const cycleGoal = goldTier < GOLD_TIER_GOALS.length
+      ? GOLD_TIER_GOALS[goldTier] - (goldTier ? GOLD_TIER_GOALS[goldTier - 1] : 0) : 0;
+    goldNumEl.textContent = cycleGoal ? goldShown + '/' + cycleGoal : goldShown;
   } else {
     goldCounterEl.style.display = 'none';  // 落桶后清零，攒下一档
   }
@@ -341,12 +366,13 @@ function playMouseClick() {
     src.start(t + dl); src.stop(t + dl + dur + 0.02);
   });
 }
-function playCrack(perfect) {
+function playCrack(perfect, chainGen = 0) {
   if (muted) return;
   if (fishMode) { playMouseClick(); return; }
   // 完美开壳固定用最脆的嗑瓜子-3，且播得更快更脆
   const a = perfect ? crackSounds[2] : crackSounds[(Math.random() * 3) | 0];
-  a.playbackRate = (perfect ? 1.18 : 1) + combo * 0.015;  // 连嗑时嗑声略快略脆
+  // 连嗑略快略脆；连锁撞开的音调逐代上扬，让多米诺"听得见"
+  a.playbackRate = (perfect ? 1.18 : 1) + combo * 0.015 + chainGen * 0.08;
   a.currentTime = 0;
   a.play().catch(() => {});
 }
@@ -542,7 +568,7 @@ function pour() {
 }
 
 /* ================= 嗑开 ================= */
-function crackSeed(s, charge = 0) {
+function crackSeed(s, charge = 0, gen = 0) {
   const i = seeds.indexOf(s);
   if (i >= 0) seeds.splice(i, 1);
   if (pressedSeed === s) pressedSeed = null;
@@ -556,21 +582,38 @@ function crackSeed(s, charge = 0) {
   const gold = s.type === 'gold';
   combo = now - lastCrackAt < 1.2 ? Math.min(8, combo + 1) : 0;
   lastCrackAt = now;
+  // 全爆彩蛋：0.8% 概率引爆全桌连锁；首次保底前 100 颗内必出（?bigbang 必触发）
+  const bangP = BIGBANG_TEST || (!bangSeen && total >= bangDebutAt) ? 1 : 0.008;
+  if (gen === 0 && seeds.length >= 15 && Math.random() < bangP) {
+    bangSeen = true;
+    if (!BIGBANG_TEST) try { localStorage.setItem('guazi_bang_seen', '1'); } catch (e) {}
+    bigBangUntil = now + 4;
+    bangCelebrated = false;  // 清屏后撒彩带
+    bangTotalAt = total;     // 统计这一炸引爆了多少颗
+    shake = { t: 0.2, mag: 4 };
+    // 冲击波引信：全屏瓜子按离触发点的距离依次炸开，保证一颗不剩
+    for (const o of seeds) {
+      if (o === s) continue;
+      o.bangAt = now + 0.12 + Math.hypot(o.x - s.x, o.y - s.y) / 900 + rnd(0, 0.12);
+    }
+  }
   const chargeBoost = 1 + charge * 1.4;
   const boost = (1 + combo * 0.05) * chargeBoost;  // 连嗑和蓄力都会让壳飞得更猛
   // 完美开壳（7%，金瓜子除外）：两片无裂缝旧版壳对称飞出，嗑声最脆，仁翻跟头
   const perfect = !gold && Math.random() < 0.07;
-  playCrack(perfect);
+  playCrack(perfect, gen);
   if (gold) playDing();
   if (gold) shake = { t: 0.13, mag: 3 };  // 只有金瓜子震动
 
   const perp = s.rot + Math.PI / 2;
+  // 瞄准射击：按住拖拽瞄准且蓄力过半，朝瞄准方向那片壳必远飞、散布收窄（可以练投篮）
+  const aimShot = !perfect && s.aimRot != null && charge > 0.5;
   const shellH = s.H * 0.82;
   // 嗑开结果：B 2完整壳(50%) / A 2碎屑+1完整壳(30%) / C 3-4片碎屑(20%)
   const roll = Math.random();
   let pieceTypes;
   if (perfect || roll < 0.50) pieceTypes = ['shell', 'shell'];
-  else if (roll < 0.80) pieceTypes = ['debris', 'debris', 'shell'];
+  else if (roll < 0.80) pieceTypes = ['shell', 'debris', 'debris'];  // 完整壳放第一片，保证它从尖飞出
   else pieceTypes = Math.random() < 0.5 ? ['debris', 'debris', 'debris'] : ['debris', 'debris', 'debris', 'debris'];
   // 碎屑只用 4、5
   const pickDebris = () => Math.random() < 0.5 ? 'debris4' : 'debris5';
@@ -578,17 +621,29 @@ function crackSeed(s, charge = 0) {
   const pSpd = rnd(230, 330), pAOff = rnd(-0.12, 0.12), pVr = rnd(5, 9);
   const farP = 0.45;
   const chargedFarP = Math.min(0.9, farP + charge * 0.35);
-  const normalChargedFarP = charge > 0 ? Math.min(0.5, charge * 0.5) : 0;
+  const normalChargedFarP = Math.min(0.6, 0.25 + charge * 0.5);  // 普通瓜子轻点也有 25% 飞溅
   const perfectFarP = 0.3;
   const pFar = s.type !== 'normal' && Math.random() < perfectFarP;
+  // 远飞判定整颗只 roll 一次，归属第一片（尖向）；力度最大的永远是从尖飞出的那片
+  const tipFar = aimShot ? true : (s.type !== 'normal' ? Math.random() < chargedFarP : Math.random() < normalChargedFarP);
+  let tipFling = 1;
   for (let k = 0; k < pieceTypes.length; k++) {
     const isShell = pieceTypes[k] === 'shell';
     const useOld = perfect || (isShell && Math.random() < 0.35);
     const side = k % 2 === 0 ? -1 : 1;
-    const a = perp + (perfect ? pAOff : rnd(-0.5, 0.5));
-    // 胖/金瓜子的壳更容易猛飞，能横跨半个甚至一个屏幕
-    const far = perfect ? pFar : (s.type !== 'normal' ? Math.random() < chargedFarP : Math.random() < normalChargedFarP);
-    const fling = far ? (perfect ? rnd(8, 12) : rnd(8, 18 + charge * 12)) : 1;
+    // k=0（side=-1）固定从瓜子尖飞出：方向更准、速度最高，也是瞄准弹
+    const isTip = k === 0;
+    const isAimPiece = aimShot && isTip;
+    const a = perp + (perfect ? pAOff : isAimPiece ? rnd(-0.05, 0.05) : isTip ? rnd(-0.22, 0.22) : rnd(-0.5, 0.5));
+    // 远飞只从尖出；其余片偶尔跟飞但力度必小于尖
+    const far = perfect ? pFar : isTip ? tipFar : tipFar && Math.random() < 0.3;
+    let fling = 1;
+    if (far) fling = perfect ? rnd(8, 12) : isTip ? (isAimPiece ? rnd(10, 15) : rnd(8, 18 + charge * 12)) : tipFling * rnd(0.45, 0.7);
+    if (isTip && !perfect) tipFling = Math.max(fling, 1.4);
+    // 速度一次生成保证方向准确（旧代码 vx/vy 独立随机会把方向带偏）；尖那片基础速度也最高
+    const spd = perfect ? pSpd : isTip ? rnd(240, 380) : rnd(150, 320);
+    const jx = perfect || isAimPiece ? 0 : rnd(-80, 80) * (isTip ? 0.45 : 1);
+    const jy = perfect || isAimPiece ? 0 : rnd(-80, 80) * (isTip ? 0.45 : 1);
     shells.push({
       kind: isShell ? 'shell' : 'debris',
       variant: s.variant,
@@ -598,11 +653,12 @@ function crackSeed(s, charge = 0) {
       side,
       x: s.x + Math.cos(a) * side * 5,
       y: s.y + Math.sin(a) * side * 5,
-      vx: (Math.cos(a) * side * (perfect ? pSpd : rnd(150, 340)) + (perfect ? 0 : rnd(-80, 80))) * boost * fling,
-      vy: (Math.sin(a) * side * (perfect ? pSpd : rnd(150, 340)) + (perfect ? 0 : rnd(-80, 80))) * boost * fling,
+      vx: (Math.cos(a) * side * spd + jx) * boost * fling,
+      vy: (Math.sin(a) * side * spd + jy) * boost * fling,
       rot: s.rot + (perfect ? 0 : rnd(-0.5, 0.5)),
       vr: (perfect ? -side * pVr : far ? rnd(-15, 15) : rnd(-9, 9)) * (1 + combo * 0.04),
       damp: far ? 4.2 : 5.5, hopT: far ? 0.9 : 0.38, hopA: far ? 26 : 15,
+      gen,  // 连锁代数：玩家嗑的=0，被撞开的+1，传两代为止
       t: 0, settled: false, stamped: false, swept: false, sweepDelay: 0,
       // 每片壳的阴影各不相同：完整壳厚重，碎屑轻薄
       shAl: isShell ? rnd(0.3, 0.42) : rnd(0.15, 0.25),
@@ -613,7 +669,7 @@ function crackSeed(s, charge = 0) {
   }
 
   // 崩开瞬间的碎渣：向上扇形喷出，瞬时消散；连嗑时更多
-  const nCrumb = 4 + ((Math.random() * 3) | 0) + ((combo * 0.5) | 0);
+  const nCrumb = 4 + ((Math.random() * 3) | 0) + ((combo * 0.5) | 0) + gen * 4;  // 被撞开的碎渣更多，连锁看得见
   for (let c = 0; c < nCrumb; c++) {
     if (crumbs.length >= MAX_CRUMBS) break;
     const ca = -Math.PI / 2 + rnd(-0.6, 0.6);
@@ -645,9 +701,12 @@ function crackSeed(s, charge = 0) {
       });
     }
     goldN++;
+    if (!GOLD_TEST) try { localStorage.setItem('guazi_gold_n', goldN); } catch (e) {}
   }
   total++; bagCount++;
   refreshCounter();
+  // 嗑到 25 颗还没用过蓄力，软提示一次
+  if (!chargeHintDone && chargeHintT < 0 && total === 25) chargeHintT = 7;
   if (bagCount >= BAG_LIMIT && !needSweep) { needSweep = true; trashBounce = 1; }
 }
 
@@ -733,6 +792,7 @@ function landGoldDrop() {
   const ex = goldDrop.x1, ey = goldDrop.y1;
   goldDrop = null;
   goldTier = Math.min(3, goldTier + 1);
+  if (!GOLD_TEST) try { localStorage.setItem('guazi_gold_tier', goldTier); } catch (e) {}
   trashBounce = 1; trashWobble = 0.8;
   if (goldTier === 3) { goldSweep = 0; goldFlash = 1; }  // 功德圆满：镀金扫光 + 全屏金闪
   playDing();
@@ -982,6 +1042,50 @@ function drawFish(g) {
   }
 }
 
+/* ================= 引导提示 ================= */
+function drawChargeHint(g) {
+  if (chargeHintT <= 0) return;
+  const a = clamp(Math.min(chargeHintT / 0.4, (7 - chargeHintT) * 2.5), 0, 1);
+  const txt = '试试按住一颗瓜子不松手';
+  g.save();
+  g.globalAlpha = a;
+  g.font = '500 13px -apple-system,"PingFang SC","Microsoft YaHei",sans-serif';
+  const tw = g.measureText(txt).width;
+  // 跟随鼠标上方，夹在屏幕内
+  const bx = clamp(mouseX, tw / 2 + 16, W - tw / 2 - 16);
+  const by = Math.max(34, mouseY - 44);
+  g.fillStyle = 'rgba(73,58,40,0.92)';
+  g.beginPath();
+  g.roundRect(bx - tw / 2 - 12, by - 15, tw + 24, 30, 15);
+  g.fill();
+  g.fillStyle = '#f5edda';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(txt, bx, by);
+  g.restore();
+}
+function drawBangMsg(g) {
+  if (bangMsgT <= 0) return;
+  const a = clamp(Math.min((4 - bangMsgT) * 2.5, bangMsgT / 0.6), 0, 1);
+  const pop = 1 + 0.18 * Math.exp(-(4 - bangMsgT) * 4);
+  g.save();
+  g.globalAlpha = a;
+  g.translate(W / 2, H * 0.38);
+  g.scale(pop, pop);
+  const ff = '"Marker Felt","Chalkboard SE","Comic Sans MS",cursive';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.lineJoin = 'round';
+  g.strokeStyle = 'rgba(245,237,218,0.9)';
+  g.fillStyle = '#d23d2e';
+  g.font = `700 36px ${ff}`;
+  g.lineWidth = 6;
+  g.strokeText('COMBO', 0, -38);
+  g.fillText('COMBO', 0, -38);
+  g.font = `700 80px ${ff}`;
+  g.lineWidth = 10;
+  g.strokeText(bangMsg, 0, 28);
+  g.fillText(bangMsg, 0, 28);
+  g.restore();
+}
 /* ================= 扫一扫 ================= */
 function sweep() {
   if (!shells.length) return;
@@ -1023,23 +1127,36 @@ function hitSeed(px, py) {
   return null;
 }
 cv.addEventListener('pointerdown', e => {
+  mouseX = e.clientX; mouseY = e.clientY;
   ensureAudio();
   unlockAudio();
   if (trashHitTest(e.clientX, e.clientY)) { sweep(); return; }
   if (fishHitTest(e.clientX, e.clientY)) { fishMode = !fishMode; syncBGMVolume(true); fishBounce = 1; return; }
   const s = hitSeed(e.clientX, e.clientY);
-  if (s) { pressedSeed = s; pressStartAt = performance.now(); applyCursor(e.clientX, e.clientY); return; }
+  if (s) { s.aimRot = null; s.aimVel = 0; pressedSeed = s; pressStartAt = performance.now(); applyCursor(e.clientX, e.clientY); return; }
   if (bagHitTest(e.clientX, e.clientY)) pour();
 });
 window.addEventListener('pointerup', e => {
   if (pressedSeed) {
     const hold = (performance.now() - pressStartAt) / 1000;
     const charge = clamp((hold - 0.18) / 1.02, 0, 1);
+    // 玩家已经会蓄力了，不用再提示
+    if (charge > 0.3 && !chargeHintDone) {
+      chargeHintDone = true;
+      if (chargeHintT > 0.4) chargeHintT = 0.4;
+      try { localStorage.setItem('guazi_hint_charge', '1'); } catch (e2) {}
+    }
     crackSeed(pressedSeed, charge);
   }
   applyCursor(e.clientX, e.clientY);
 });
 cv.addEventListener('pointermove', e => {
+  mouseX = e.clientX; mouseY = e.clientY;
+  // 按住瓜子拖出死区 = 瞄准：瓜子转身，壳将朝拖拽方向飞
+  if (pressedSeed) {
+    const dx = e.clientX - pressedSeed.x, dy = e.clientY - pressedSeed.y;
+    if (Math.hypot(dx, dy) > 14) pressedSeed.aimRot = Math.atan2(dy, dx) + Math.PI / 2;  // 尖指向拖拽方向
+  }
   trashHoverTarget = trashHitTest(e.clientX, e.clientY) ? 1 : 0;
   fishHoverTarget = fishHitTest(e.clientX, e.clientY) ? 1 : 0;
   bagHoverTarget = bagHitTest(e.clientX, e.clientY) ? 1 : 0;
@@ -1065,7 +1182,11 @@ function update(dt) {
     }
   }
   if (BAG.wig > 0) BAG.wig = Math.max(0, BAG.wig - dt * 2.2);
-  if (!seeds.length && !pourQueue && !needSweep && now - lastBagHint > 3) { lastBagHint = now; BAG.wig = 0.7; }
+  // 首次进入（还没倒过瓜子）袋子晃得更勤更用力，代替文字引导
+  if (!seeds.length && !pourQueue && !needSweep && now - lastBagHint > (pourRounds === 0 ? 1.3 : 3)) {
+    lastBagHint = now;
+    BAG.wig = pourRounds === 0 ? 1 : 0.7;
+  }
 
   for (const s of seeds) {
     if (s.state === 'fly') {
@@ -1078,6 +1199,14 @@ function update(dt) {
     }
     const chargeT = pressedSeed === s ? 1 + clamp((performance.now() - pressStartAt) / 1200, 0, 1) * 0.6 : 0;
     s.pressT += (chargeT - s.pressT) * Math.min(1, dt * 18);
+    // 瞄准时瓜子平滑转身：临界阻尼弹簧，起步柔和不窜，但仍约 0.2s 到位
+    if (pressedSeed === s && s.aimRot != null) {
+      let da = s.aimRot - s.rot;
+      da = Math.atan2(Math.sin(da), Math.cos(da));
+      const w = 22;
+      s.aimVel = (s.aimVel || 0) + (da * w * w - 2 * w * (s.aimVel || 0)) * dt;
+      s.rot += s.aimVel * dt;
+    }
     if (s.kickT > 0) {
       s.kickT -= dt;
       // 被撞飞的滑行：0.3s 急速冲出再减速停下
@@ -1086,6 +1215,73 @@ function update(dt) {
         const e = easeOutCubic(s.kSlide);
         s.x = lerp(s.kx0, s.kx1, e);
         s.y = lerp(s.ky0, s.ky1, e);
+      }
+    }
+  }
+
+  // 全爆冲击波：到点的瓜子依次炸开（先收集再嗑，避免迭代中改 seeds）
+  if (now < bigBangUntil) {
+    const due = seeds.filter(o => o.bangAt && o.bangAt <= now && o.state === 'idle');
+    for (const o of due) crackSeed(o, rnd(0.2, 0.5), 1);
+  }
+  // 全爆清屏：从天而降一阵彩带庆祝
+  if (!bangCelebrated && !seeds.length && !pourQueue) {
+    bangCelebrated = true;
+    bangMsg = total - bangTotalAt;
+    bangMsgT = 4;  // 给录屏的人一个完美的结束帧
+    for (let i = 0; i < 110 && confetti.length < MAX_CONFETTI; i++) {
+      confetti.push({
+        x: rnd(0, W), y: rnd(-260, -10),
+        // 喷射出场：高初速 + 空气阻力衰减到飘落终速；delay 错开出场不排队
+        delay: rnd(0, 0.55),
+        vy: rnd(800, 1300), term: rnd(260, 400), vx: rnd(-140, 140),
+        sway: rnd(20, 70), ph: rnd(0, Math.PI * 2), fq: rnd(1.5, 3.5),
+        rot: rnd(0, Math.PI * 2), vr: rnd(-6, 6),
+        w: rnd(11, 19), h: rnd(5, 8),
+        col: '#d23d2e', colB: '#bd3729',  // 取自左上角包装的红，背面略暗
+        t: 0, life: rnd(1.7, 2.7),
+      });
+    }
+  }
+  for (let i = confetti.length - 1; i >= 0; i--) {
+    const c = confetti[i];
+    if (c.delay > 0) { c.delay -= dt; continue; }
+    c.t += dt;
+    if (c.t > c.life || c.y > H + 20) { confetti.splice(i, 1); continue; }
+    c.y += c.vy * dt;
+    c.vy += (c.term - c.vy) * Math.min(1, dt * 2.2);  // 阻力减速，渐入飘落
+    // 高速段直坠少摆动，慢下来后摆动渐显
+    const floaty = clamp(1 - (c.vy - c.term) / 500, 0.15, 1);
+    c.x += (c.vx + Math.cos(now * c.fq + c.ph) * c.sway * floaty) * dt;
+    c.vx *= Math.exp(-2 * dt);
+    c.rot += c.vr * dt * floaty;
+  }
+
+  // 闲置瓜子轻推散开：被撞落点不查间距，堆在一起的会自己慢慢分开
+  for (let i = 0; i < seeds.length; i++) {
+    const a = seeds[i];
+    if (a.state !== 'idle' || (a.kickT > 0 && a.kSlide < 1)) continue;
+    for (let j = i + 1; j < seeds.length; j++) {
+      const b = seeds[j];
+      if (b.state !== 'idle' || (b.kickT > 0 && b.kSlide < 1)) continue;
+      let dx = b.x - a.x, dy = b.y - a.y;
+      let d2 = dx * dx + dy * dy;
+      const minD = (a.H + b.H) * 0.30;
+      if (d2 >= minD * minD) continue;
+      if (d2 < 0.01) { const ra = Math.random() * Math.PI * 2; dx = Math.cos(ra); dy = Math.sin(ra); d2 = 1; }
+      const d = Math.sqrt(d2);
+      const push = Math.min(55 * dt, (minD - d) * 0.5);
+      const ux = dx / d, uy = dy / d;
+      const aLock = pressedSeed === a, bLock = pressedSeed === b;  // 被按住的不动，全推给另一颗
+      if (!aLock) {
+        a.x = clamp(a.x - ux * push * (bLock ? 2 : 1), 24, W - 24);
+        a.y = clamp(a.y - uy * push * (bLock ? 2 : 1), 70, H - 24);
+        a.tx = a.x; a.ty = a.y;
+      }
+      if (!bLock) {
+        b.x = clamp(b.x + ux * push * (aLock ? 2 : 1), 24, W - 24);
+        b.y = clamp(b.y + uy * push * (aLock ? 2 : 1), 70, H - 24);
+        b.tx = b.x; b.ty = b.y;
       }
     }
   }
@@ -1112,6 +1308,7 @@ function update(dt) {
     if (sh.settled) continue;
     sh.t += dt;
     sh.hop = Math.sin(Math.PI * Math.min(1, sh.t / (sh.hopT ?? 0.38))) * (sh.hopA ?? 15);
+    const prevX = sh.x, prevY = sh.y;  // 扫掠碰撞用：快壳一帧能跨 30-50px，逐点检测会穿模
     sh.x += sh.vx * dt; sh.y += sh.vy * dt; sh.rot += sh.vr * dt;
     const damp = Math.exp(-(sh.damp ?? 5.5) * dt);
     sh.vx *= damp; sh.vy *= damp; sh.vr *= damp;
@@ -1120,30 +1317,51 @@ function update(dt) {
     if (sh.y < 70) { sh.y = 70; sh.vy = Math.abs(sh.vy) * 0.5; }
     if (sh.y > H - 24) { sh.y = H - 24; sh.vy = -Math.abs(sh.vy) * 0.5; }
     const shSpd = Math.hypot(sh.vx, sh.vy);
+    const mvx = sh.x - prevX, mvy = sh.y - prevY;
+    const ml2 = mvx * mvx + mvy * mvy;
+    // 点到本帧移动线段的最近点
+    const segNearest = (cx, cy) => {
+      if (ml2 < 0.0001) return { x: sh.x, y: sh.y };
+      const t = clamp(((cx - prevX) * mvx + (cy - prevY) * mvy) / ml2, 0, 1);
+      return { x: prevX + mvx * t, y: prevY + mvy * t };
+    };
     // 神投手：飞行中的壳撞到废纸篓 → 反弹 + 晃动 + 开盖吸壳
     if (shSpd > 60) {
       const tp = trashPos();
-      const tdx = sh.x - tp.x, tdy = sh.y - (tp.y - 10);
+      const tcx = tp.x, tcy = tp.y - 10;
+      const q = segNearest(tcx, tcy);
+      const tdx = q.x - tcx, tdy = q.y - tcy;
       if (Math.hypot(tdx, tdy) < TRASH_DUNK_RADIUS) {
         const nd = Math.hypot(tdx, tdy) || 1;
         const nx = tdx / nd, ny = tdy / nd;
         const dot = sh.vx * nx + sh.vy * ny;
         sh.vx = (sh.vx - 2 * dot * nx) * 0.55;
         sh.vy = (sh.vy - 2 * dot * ny) * 0.55;
-        sh.x = tp.x + nx * 30; sh.y = (tp.y - 10) + ny * 30;
+        sh.x = tcx + nx * 30; sh.y = tcy + ny * 30;
         trashWobble = 1;
         trashBounce = 0.6;
         playDunk();
         if (dunkSweepTimer < 0 && sweepRemain <= 0) dunkSweepTimer = 0.9;
         continue;
       }
-      // 壳砸中桌上的瓜子，撞得弹一下并被推开少许
-      if (shSpd > 120) {
+      // 壳砸中桌上的瓜子：猛击直接撞开（可连锁），其余撞得弹一下被推开
+      if (shSpd > 80) {
+        const bigBang = now < bigBangUntil;  // 全爆窗口：不限代数、不限数量、低门槛
+        const canChain = bigBang || (sh.gen ?? 0) < 2;  // 平时连锁最多传两代
+        const chainSpd = bigBang ? 200 : 650;
+        let chainHits = null;
         for (const s2 of seeds) {
           if (s2.state !== 'idle' || s2.kickT > 0) continue;
-          const sdx = s2.x - sh.x, sdy = s2.y - sh.y;
+          const c = segNearest(s2.x, s2.y);
+          const sdx = s2.x - c.x, sdy = s2.y - c.y;
           const hitR = s2.H * 0.32;
           if (sdx * sdx + sdy * sdy < hitR * hitR) {
+            if (shSpd > chainSpd && canChain) {
+              // 撞击够猛：直接撞开（先收集，循环外处理，避免迭代中改 seeds）
+              const ddx = c.x - prevX, ddy = c.y - prevY;
+              (chainHits ??= []).push({ s: s2, d: ddx * ddx + ddy * ddy });
+              continue;
+            }
             const nd = Math.min(320, shSpd * 0.34);
             const na = Math.atan2(sh.vy, sh.vx);
             const p = safeSeedSpot(s2.x + Math.cos(na) * nd, s2.y + Math.sin(na) * nd, s2.H);
@@ -1154,6 +1372,15 @@ function update(dt) {
             s2.kickImpact = clamp(shSpd / 850, 0.55, 1.8);
             s2.kickSpin = (Math.random() < 0.5 ? -1 : 1) * rnd(0.7, 1.6) * s2.kickImpact;
           }
+        }
+        if (chainHits) {
+          // 动量传递：撞得越猛，被撞开的瓜子壳飞得也越猛，连锁有机会传下去但逐代衰减
+          chainHits.sort((p, q) => p.d - q.d);  // 按飞行路径先后排序
+          const passCharge = bigBang ? 0.7 : clamp((shSpd - 650) / 2400, 0.15, 0.6) * (sh.gen ? 0.5 : 1);
+          const nextGen = (sh.gen ?? 0) + 1;
+          // 平时一片壳最多撞开 2 颗；全爆窗口不限
+          for (const h of (bigBang ? chainHits : chainHits.slice(0, 2))) crackSeed(h.s, passCharge, nextGen);
+          sh.vx *= 0.6; sh.vy *= 0.6;  // 撞开瓜子损失动能
         }
       }
     }
@@ -1241,6 +1468,15 @@ function update(dt) {
   if (goldSweep >= 0) { goldSweep += dt / 0.9; if (goldSweep >= 1) goldSweep = -1; }
   if (goldFlash > 0) goldFlash = Math.max(0, goldFlash - dt * 1.6);
   if (trashShine > 0) trashShine = Math.max(0, trashShine - dt * 1.5);
+  if (chargeHintT > 0) {
+    chargeHintT -= dt;
+    // 完整看完一遍就算提示过，跨会话不再出现
+    if (chargeHintT <= 0 && !chargeHintDone) {
+      chargeHintDone = true;
+      try { localStorage.setItem('guazi_hint_charge', '1'); } catch (e) {}
+    }
+  }
+  if (bangMsgT > 0) bangMsgT -= dt;
   trashHover += (trashHoverTarget - trashHover) * Math.min(1, dt * 10);
   sweepLid += (((sweepRemain > 0 || dunkSweepTimer > 0) ? 1 : 0) - sweepLid) * Math.min(1, dt * 8);
   // 图标需悬停 0.6s 才浮现，避免鼠标扫过就暴露
@@ -1395,12 +1631,37 @@ function render() {
   }
   ctx.globalAlpha = 1;
 
+  // 彩带：绕长轴翻面——压缩到近零再展开，背面用暗色；长边弓起模拟软纸的弯曲颤动
+  for (const c of confetti) {
+    if (c.delay > 0) continue;  // 还没出场
+    const f = Math.sin(now * c.fq * 2.2 + c.ph);  // 翻面相位，符号区分正反面
+    const bend = Math.sin(now * c.fq * 1.4 + c.ph * 1.7) * c.h * 0.45;  // 弯曲量随时间摆动
+    const hw = c.w / 2, hh = c.h / 2;
+    ctx.globalAlpha = Math.min(1, (c.life - c.t) / 0.5);
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    ctx.rotate(c.rot);
+    ctx.scale(1, Math.max(0.07, Math.abs(f)));
+    ctx.fillStyle = f >= 0 ? c.col : c.colB;  // 纸质感：正反两面色，无反光
+    ctx.beginPath();
+    ctx.moveTo(-hw, -hh);
+    ctx.quadraticCurveTo(0, -hh + bend, hw, -hh);
+    ctx.lineTo(hw, hh);
+    ctx.quadraticCurveTo(0, hh + bend, -hw, hh);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+
   drawBag(ctx);
   ctx.restore();
 
   drawTrash(ctx);
   drawGoldDrop(ctx);
   drawFish(ctx);
+  drawChargeHint(ctx);
+  drawBangMsg(ctx);
   if (goldFlash > 0) {
     ctx.fillStyle = `rgba(255,214,110,${(0.22 * goldFlash).toFixed(3)})`;
     ctx.fillRect(0, 0, W, H);
@@ -1441,11 +1702,11 @@ resize();
 startBGM();
 requestAnimationFrame(loop);
 
-/* ?gold1 / ?gold4 / ?gold8 — 快速测试三档金桶（都差一颗触发下一档）；?gold9 — 直接全金桶 */
-if (location.search.includes('gold9')) { goldTier = 3; goldN = 9; }
-else if (location.search.includes('gold8')) { goldTier = 2; goldN = 8; goldShown = 3; refreshCounter(); }
-else if (location.search.includes('gold4')) { goldTier = 1; goldN = 4; goldShown = 2; refreshCounter(); }
-else if (location.search.includes('gold1')) { goldN = 1; goldShown = 1; refreshCounter(); }
+/* ?gold9 / ?gold19 / ?gold29 — 快速测试三档金桶（都差一颗触发下一档）；?goldfull — 直接全金桶 */
+if (location.search.includes('goldfull')) { goldTier = 3; goldN = 30; goldShown = 0; refreshCounter(); }
+else if (location.search.includes('gold29')) { goldTier = 2; goldN = 29; goldShown = 9; refreshCounter(); }
+else if (location.search.includes('gold19')) { goldTier = 1; goldN = 19; goldShown = 9; refreshCounter(); }
+else if (location.search.includes('gold9')) { goldN = 9; goldShown = 9; refreshCounter(); }
 
 /* 冒烟测试 */
 if (location.search.includes('autotest')) {
