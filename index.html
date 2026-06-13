@@ -6,7 +6,8 @@
 <title>嗑会儿瓜子</title>
 <link rel="icon" href="web-assets/icon.png">
 <style>
-  html,body{margin:0;height:100%;overflow:hidden;background:#e9e2d2;}
+  html,body{margin:0;height:100%;overflow:hidden;background:#e9e2d2;
+    -webkit-touch-callout:none;-webkit-user-select:none;user-select:none;}
   #c{display:block;width:100vw;height:100vh;touch-action:none;cursor:default;}
   #ui{position:fixed;top:18px;right:18px;display:flex;flex-direction:column;gap:10px;align-items:flex-end;z-index:10;}
   #counter{font:500 15px/1 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
@@ -14,6 +15,10 @@
   #goldCounter{font:500 15px/1 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
     color:rgba(200,146,42,.85);align-items:center;gap:4px;user-select:none;-webkit-user-select:none;}
   #goldCounter img{height:24px;display:block;}
+  @media(max-width:599px){
+    #ui{right:12px;}
+    #goldCounter{flex-direction:row-reverse;}
+  }
   #loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
     background:#e9e2d2;z-index:100;font:500 18px/1 "PingFang SC","Microsoft YaHei",sans-serif;color:#6b513a;}
   #milestone{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;
@@ -131,8 +136,9 @@ const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 /* ================= 瓜子配置 ================= */
-const SEED_H = { normal: 78, big: 90, gold: 78 };
-const MAX_SEEDS = 100;  // 桌面瓜子上限
+let SEED_H = { normal: 78, big: 90, gold: 78 };
+let MAX_SEEDS = 100;
+let POUR_BASE = 16;  // 每次倒出的基础数量
 const MAX_CRUMBS = 90;
 const MAX_GOLD_PARTS = 80;
 
@@ -485,6 +491,15 @@ function bagMetrics() {
   const mobile = W < 600;
   bagDrawH = Math.min(mobile ? 260 : 520, H * (mobile ? 0.34 : 0.68));
   bagDrawW = bagDrawH * ASP.bag;
+  if (mobile) {
+    SEED_H = { normal: 68, big: 78, gold: 68 };
+    MAX_SEEDS = 70; POUR_BASE = 12;
+    TZ = 39; TRASH_DUNK_RADIUS = 19;
+  } else {
+    SEED_H = { normal: 78, big: 90, gold: 78 };
+    MAX_SEEDS = 100; POUR_BASE = 16;
+    TZ = 56; TRASH_DUNK_RADIUS = 27;
+  }
 }
 function drawBag(g) {
   g.save();
@@ -594,7 +609,7 @@ function spawnSeed(forceType = null) {
 }
 function pour() {
   if (needSweep) { trashBounce = 1; return; }
-  const baseN = 16 + (Math.random() * 6 | 0);
+  const baseN = POUR_BASE + (Math.random() * 6 | 0);
   const n = Math.min(Math.round(baseN * 1.5), MAX_SEEDS - seeds.length - pourQueue);
   BAG.wig = 1;
   if (n <= 0) return;
@@ -819,12 +834,12 @@ function renderShell(g, sh) {
 }
 
 /* ================= 废纸篓（插画风） ================= */
-const TZ = 56;
-const TRASH_DUNK_RADIUS = 27;
+let TZ = 56;
+let TRASH_DUNK_RADIUS = 27;
 let trashHover = 0;
 let trashHoverTarget = 0;
 
-function trashPos() { return { x: W - 46, y: H - 46 }; }
+function trashPos() { const m = W < 600; return { x: W - (m ? 24 : 46), y: H - (m ? 28 : 46) }; }
 function startGoldDrop() {
   const img = goldCounterEl.querySelector('img');
   const r = img.getBoundingClientRect();
@@ -1245,6 +1260,8 @@ cv.addEventListener('pointermove', e => {
   applyCursor(e.clientX, e.clientY);
 });
 window.addEventListener('blur', () => { pressedSeed = null; });
+document.addEventListener('contextmenu', e => e.preventDefault());
+cv.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
 
 /* ================= 更新 ================= */
 let lastBagHint = -2;  // 首次提示提前：加载约 1s 后就晃袋子
