@@ -130,6 +130,7 @@ Promise.all(Object.entries(IMG_SRC).map(([k, src]) =>
   warmup.width = 2; warmup.height = 2;
   const wg = warmup.getContext('2d');
   for (const img of Object.values(ASSETS)) wg.drawImage(img, 0, 0, 1, 1);
+  [...crackSounds, ...eatSounds, pourSound, goldSound, sweepSound, dunkSound].forEach(a => { a.preload = 'auto'; });
   Promise.all(cardImgs.map(i => i.decode ? i.decode().catch(() => {}) : Promise.resolve())).then(() => {
     for (const i of cardImgs) wg.drawImage(i, 0, 0, 1, 1);
     init();
@@ -465,11 +466,12 @@ const sweepSound = new Audio('音效/清扫声.m4a');
 const dunkSound = new Audio('音效/废纸篓碰撞.m4a');
 const _mobileCheck = window.innerWidth < 600;
 const bgmTracks = _mobileCheck ? [] : [new Audio('音效/背景音乐1.m4a'), new Audio('音效/背景音乐2.m4a')];
-[...crackSounds, ...eatSounds, pourSound, goldSound, sweepSound, dunkSound, ...bgmTracks].forEach(a => { a.preload = 'auto'; a._vol = 1; });
+[...crackSounds, ...eatSounds, pourSound, goldSound, sweepSound, dunkSound, ...bgmTracks].forEach(a => { a.preload = 'none'; a._vol = 1; });
 eatSounds.forEach(a => a._vol = 0.4);
 const BGM_VOLUME = 0;
 bgmTracks.forEach(a => { a._vol = BGM_VOLUME; a.volume = 0; });
 let audioUnlocked = false;
+let firstRoundMute = true;
 let bgmStarted = false;
 let bgmIndex = 0;
 let bgmFade = null;
@@ -477,12 +479,7 @@ const BGM_FADE_SEC = 4;
 function unlockAudio() {
   if (audioUnlocked) return;
   audioUnlocked = true;
-  [...crackSounds, ...eatSounds, pourSound, sweepSound, dunkSound].forEach(a => {
-    a.volume = 0;
-    a.play().then(() => {
-      if (a.volume === 0) { a.pause(); a.currentTime = 0; a.volume = a._vol; }
-    }).catch(() => { a.volume = a._vol; });
-  });
+  [...crackSounds, ...eatSounds, pourSound, goldSound, sweepSound, dunkSound].forEach(a => { a.preload = 'auto'; });
   startBGM();
 }
 function fadeAudio(from, to, done) {
@@ -586,7 +583,7 @@ function playMouseClick() {
   });
 }
 function playCrack(perfect, chainGen = 0) {
-  if (muted) return;
+  if (muted || firstRoundMute) return;
   if (fishMode) { playMouseClick(); return; }
   // 完美开壳固定用最脆的嗑瓜子-3，且播得更快更脆
   const a = perfect ? crackSounds[2] : crackSounds[(Math.random() * 3) | 0];
@@ -597,7 +594,7 @@ function playCrack(perfect, chainGen = 0) {
 }
 let lastEatIdx = -1;
 function playEat() {
-  if (muted || fishMode) return;
+  if (muted || fishMode || firstRoundMute) return;
   let idx = (Math.random() * 2) | 0;
   if (idx === lastEatIdx) idx = 1 - idx;
   lastEatIdx = idx;
@@ -608,25 +605,25 @@ function playEat() {
   a.play().catch(() => {});
 }
 function playDing() {
-  if (muted || fishMode) return;
+  if (muted || fishMode || firstRoundMute) return;
   goldSound.volume = goldSound._vol;
   goldSound.currentTime = 0;
   goldSound.play().catch(() => {});
 }
 function playPour() {
-  if (muted || fishMode) return;
+  if (muted || fishMode || firstRoundMute) return;
   pourSound.volume = pourSound._vol;
   pourSound.currentTime = 0;
   pourSound.play().catch(() => {});
 }
 function playSweep() {
-  if (muted || fishMode) return;
+  if (muted || fishMode || firstRoundMute) return;
   sweepSound.volume = sweepSound._vol;
   sweepSound.currentTime = 0;
   sweepSound.play().catch(() => {});
 }
 function playDunk() {
-  if (muted || fishMode) return;
+  if (muted || fishMode || firstRoundMute) return;
   dunkSound.volume = dunkSound._vol;
   dunkSound.currentTime = 0;
   dunkSound.play().catch(() => {});
@@ -896,8 +893,9 @@ function crackSeed(s, charge = 0, gen = 0) {
     }
   }
   // 全爆彩蛋：必须蓄力触发，单击不会引爆；首次保底前 100 颗内必出（?bigbang 必触发）
-  const bangP = BIGBANG_TEST || (!bangSeen && total >= bangDebutAt) ? 1 : 0.008;
-  if (gen === 0 && charge > 0.5 && seeds.length >= 15 && Math.random() < bangP) {
+  const bangP = BIGBANG_TEST || (!bangSeen && total >= bangDebutAt) ? 1 : isMobile ? 0.035 : 0.008;
+  const bangMinSeeds = isMobile ? 8 : 15;
+  if (gen === 0 && charge > 0.5 && seeds.length >= bangMinSeeds && Math.random() < bangP) {
     bangSeen = true;
     if (!BIGBANG_TEST) try { localStorage.setItem('guazi_bang_seen', '1'); } catch (e) {}
     bigBangUntil = now + 4;
@@ -1126,7 +1124,6 @@ function landGoldDrop() {
     [{ transform: 'scale(0.6)', opacity: 0.4 }, { transform: 'scale(1)', opacity: 1 }],
     { duration: 350, easing: 'cubic-bezier(.2,1.6,.4,1)' }
   );
-  showGoldUpgradeCard(goldTier);
 }
 function drawGoldDrop(g) {
   if (!goldDrop) return;
@@ -1485,6 +1482,7 @@ function hitSeed(px, py) {
 }
 cv.addEventListener('pointerdown', e => {
   mouseX = e.clientX; mouseY = e.clientY;
+  firstRoundMute = false;
   ensureAudio();
   unlockAudio();
   if (trashHitTest(e.clientX, e.clientY)) { sweep(true); return; }
@@ -2213,6 +2211,7 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 startBGM();
+pour();
 requestAnimationFrame(loop);
 
 /* ?gold9 / ?gold19 / ?gold29 — 快速测试三档金桶（都差一颗触发下一档）；?goldfull — 直接全金桶 */
