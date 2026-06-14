@@ -125,8 +125,15 @@ Promise.all(Object.entries(IMG_SRC).map(([k, src]) =>
   })
 )).then(() => {
   for (const [k, img] of Object.entries(ASSETS)) ASP[k] = img.width / img.height;
-  CARD_PRELOAD.forEach(src => { const i = new Image(); i.src = src; });
-  init();
+  const cardImgs = CARD_PRELOAD.map(src => { const i = new Image(); i.src = src; return i; });
+  const warmup = document.createElement('canvas');
+  warmup.width = 2; warmup.height = 2;
+  const wg = warmup.getContext('2d');
+  for (const img of Object.values(ASSETS)) wg.drawImage(img, 0, 0, 1, 1);
+  Promise.all(cardImgs.map(i => i.decode ? i.decode().catch(() => {}) : Promise.resolve())).then(() => {
+    for (const i of cardImgs) wg.drawImage(i, 0, 0, 1, 1);
+    init();
+  });
 }).catch(src => {
   loadingEl.textContent = '素材加载失败: ' + src;
 });
@@ -204,7 +211,20 @@ for (const k of ['seedThin', 'seedFat']) {
   sg.fillRect(0, 0, w, h);
   SEED_SHADOW[k] = sc;
 }
-let sinceGold = 99;  // 距上一颗金瓜子的间隔，刚出过金则压低概率防连出
+{
+  const wc = document.createElement('canvas');
+  wc.width = 4; wc.height = 4;
+  const wg = wc.getContext('2d');
+  for (const s of Object.values(SPRITES)) wg.drawImage(s, 0, 0, 1, 1);
+  for (const s of Object.values(SEED_SHADOW)) wg.drawImage(s, 0, 0, 1, 1);
+  wg.save(); wg.translate(2, 2); wg.rotate(0.1); wg.scale(0.5, 0.5);
+  wg.globalAlpha = 0.5;
+  wg.beginPath(); wg.ellipse(1, 1, 1, 1, 0.5, 0, Math.PI * 2); wg.fill();
+  wg.beginPath(); wg.arc(1, 1, 1, 0, Math.PI * 2); wg.fill();
+  wg.fillRect(0, 0, 1, 1);
+  wg.restore();
+}
+let sinceGold = 99;
 function rollGoldTargetGap() {
   return goldN >= 5 ? 14 + ((Math.random() * 27) | 0) : 20 + ((Math.random() * 40) | 0);
 }
@@ -457,10 +477,9 @@ const BGM_FADE_SEC = 4;
 function unlockAudio() {
   if (audioUnlocked) return;
   audioUnlocked = true;
-  [...crackSounds, ...eatSounds, goldSound, pourSound, sweepSound, dunkSound].forEach(a => {
+  [...crackSounds, ...eatSounds, pourSound, sweepSound, dunkSound].forEach(a => {
     a.volume = 0;
     a.play().then(() => {
-      // 预热期间若已被真正播放（音量被还原），不要打断它
       if (a.volume === 0) { a.pause(); a.currentTime = 0; a.volume = a._vol; }
     }).catch(() => { a.volume = a._vol; });
   });
