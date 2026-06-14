@@ -6,7 +6,7 @@
 <title>嗑会儿瓜子</title>
 <link rel="icon" href="web-assets/icon.png">
 <style>
-  html,body{margin:0;height:100%;overflow:hidden;background:#e9e2d2;
+  html,body{margin:0;height:100%;overflow:hidden;background:#e9e2d2;overscroll-behavior:none;
     -webkit-touch-callout:none;-webkit-user-select:none;user-select:none;}
   #c{display:block;width:100vw;height:100vh;touch-action:none;cursor:default;}
   #ui{position:fixed;top:18px;right:18px;display:flex;flex-direction:column;gap:10px;align-items:flex-end;z-index:10;}
@@ -22,21 +22,41 @@
   #loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
     background:#e9e2d2;z-index:100;font:500 18px/1 "PingFang SC","Microsoft YaHei",sans-serif;color:#6b513a;}
   #milestone{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;
-    background:rgba(60,42,24,.28);opacity:0;transition:opacity .35s ease;pointer-events:none;}
-  #milestone.show{opacity:1;}
-  #mcard{background:#f5edda;border-radius:22px;padding:34px 46px;text-align:center;
-    box-shadow:0 18px 50px rgba(60,42,24,.28);border:2px solid rgba(210,61,46,.22);
-    transform:scale(.85);transition:transform .4s cubic-bezier(.2,1.5,.4,1);max-width:78vw;}
-  #milestone.show #mcard{transform:scale(1);}
-  #mcard .mrow{display:flex;align-items:baseline;justify-content:center;gap:7px;color:#6b513a;
-    font:500 16px/1 "PingFang SC","Microsoft YaHei",sans-serif;margin:8px 0;}
-  #mcard .mrow b{font:700 38px/1 "Marker Felt","Chalkboard SE",sans-serif;color:#d23d2e;}
-  #mcard .mrow.gold b{color:#c8922a;}
-  #mcard .mrow img{height:26px;vertical-align:middle;}
-  #mcard .mbtn{margin-top:22px;border:none;background:#d23d2e;color:#f5edda;
-    font:700 15px/1 "PingFang SC","Microsoft YaHei",sans-serif;padding:10px 32px;
-    border-radius:20px;cursor:pointer;letter-spacing:1px;pointer-events:auto;}
-  #mcard .mbtn:active{transform:scale(.94);opacity:.85;}
+    background:transparent;pointer-events:none;cursor:pointer;}
+  #milestone.show{pointer-events:auto;}
+  #mcard{position:relative;width:360px;max-width:88vw;aspect-ratio:1632/1968;
+    display:flex;flex-direction:column;align-items:center;
+    text-align:center;will-change:transform;
+    transform:var(--card-from);
+    transition:transform .8s cubic-bezier(.22,1,.36,1), opacity .35s ease;}
+  #mcard::before{content:'';position:absolute;inset:0;
+    background:url('素材/结算卡-背景.png') center/100% 100% no-repeat;
+    filter:saturate(0.75);z-index:-1;}
+  #milestone.show #mcard{transform:translate(0,0) rotate(var(--card-rot,-1deg)) !important;opacity:1;}
+  #mcard.fade-out{opacity:0 !important;transform:translate(0,0) rotate(var(--card-rot,-1deg)) !important;}
+  #mcard .mtitle{margin-top:10%;}
+  #mcard .mtitle img{height:41px;}
+  #mcard .mbig{display:flex;align-items:flex-end;justify-content:center;gap:2px;margin:6px 0 0;}
+  #mcard .mbig img{height:100px;max-width:100%;}
+  #mcard .mbig-label{margin-top:3.5%;}
+  #mcard .mbig-label img{height:26px;}
+  #mcard .mrows{position:absolute;left:30%;right:20%;top:57%;}
+  #mcard .mrow{display:flex;align-items:center;justify-content:space-between;margin:0;}
+  #mcard .mrow+.mrow{margin-top:11px;}
+  #mcard .mrow:first-child .mlabel img{height:23px;position:relative;top:2px;}
+  #mcard .mrow .mlabel img{height:23px;}
+  #mcard .mrow .mval{display:flex;align-items:center;gap:1px;}
+  #mcard .mrow .mval img.vd{height:32px;align-self:flex-end;}
+  #mcard .mrow .mval img.vu{height:23px;}
+  #mcard .mrow .mval img.vx{height:15px;}
+  #mcard .mrow+.mrow .mval{position:relative;top:-3px;right:4px;}
+  #mcard .mnew{text-align:center;margin-top:4px;}
+  #mcard .mnew img{height:16px;}
+  #mcard .mbtn{position:absolute;bottom:7%;left:50%;transform:translateX(-50%);
+    border:none;background:url('素材/结算卡-继续按钮.png') center/100% 100% no-repeat;
+    width:59%;aspect-ratio:1007/256;cursor:pointer;pointer-events:auto;color:transparent;font-size:0;
+}
+  #mcard .mbtn:active{transform:translateX(-50%) scale(.94);opacity:.85;}
 </style>
 </head>
 <body>
@@ -47,9 +67,11 @@
   <div id="goldCounter" style="display:none;"><img src="web-assets/kernel-gold.png" alt="金瓜子"><span id="goldNum">0</span></div>
 </div>
 <div id="milestone"><div id="mcard">
-  <div class="mrow">已经嗑了 <b id="msSeeds">0</b> 颗瓜子</div>
-  <div class="mrow gold">其中 <img src="web-assets/kernel-gold.png" alt="金瓜子"> <b id="msGold">0</b> 颗金瓜子</div>
-  <button class="mbtn" id="msBtn">继续嗑</button>
+  <div class="mtitle"><img src="web-assets/card-title.png?v=3" alt="你今天嗑了"></div>
+  <div class="mbig" id="msBig"></div>
+  <div class="mbig-label"><img src="web-assets/card-unit.png?v=2" alt="颗瓜子"></div>
+  <div class="mrows" id="msRows"></div>
+  <button class="mbtn" id="msBtn"></button>
 </div></div>
 <script>
 'use strict';
@@ -147,6 +169,8 @@ let MAX_SEEDS = 100;
 let POUR_BASE = 16;  // 每次倒出的基础数量
 const MAX_CRUMBS = 90;
 const MAX_GOLD_PARTS = 80;
+const crumbLimit = () => isMobile ? 55 : MAX_CRUMBS;
+const goldPartLimit = () => isMobile ? 45 : MAX_GOLD_PARTS;
 
 /* 预缩放精灵：原图近千像素高，每帧实时缩放太贵；先缩到展示尺寸的 2 倍 */
 const SPRITES = {};
@@ -186,9 +210,11 @@ let pressedSeed = null;
 let pressStartAt = 0;
 let pourQueue = 0, pourTimer = 0;
 let pourRounds = 0, firstPourGoldCountdown = -1, firstBatchRemain = 0;
+let pourClusters = [], pourClusterSlots = [];
 let shake = { t: 0, mag: 0 };
 let combo = 0, lastCrackAt = -9;  // 连嗑：1.2s 内连续嗑则升档，纯表现不计分
 let chainCount = 0, chainX = 0, chainY = 0;      // 单次点击引发的连锁颗数
+const pendingCracks = [];                          // 多米诺延迟队列
 let comboShowN = 0, comboShowT = 0, comboX = 0, comboY = 0, comboPop = 0;
 let bigBangUntil = -9;  // 全爆彩蛋：窗口期内连锁不限代数不限数量，全桌炸开
 const BIGBANG_TEST = location.search.includes('bigbang');
@@ -205,34 +231,127 @@ let bangTotalAt = 0;
 let bangBest = false;             // 这一炸是否刷新了最高纪录
 let bestCombo = 0;                // 历史最高 COMBO（持久化，只在全爆时露面）
 try { bestCombo = +localStorage.getItem('guazi_best_combo') || 0; } catch (e) {}
-let autoPourAt = -1;              // 桌面嗑空后自动续杯的倒计时
-// 里程碑：按本次会话累计（刷新归零），每满 88 颗弹一次
-const MILESTONE_STEP = 88;        // 约 2~3 分钟
-let nextMilestone = MILESTONE_STEP, milestoneT = 0;
+let milestoneT = 0;
 const msEl = document.getElementById('milestone');
-const msSeedsEl = document.getElementById('msSeeds');
-const msGoldEl = document.getElementById('msGold');
-function showMilestone() {
-  msSeedsEl.textContent = total;
-  msGoldEl.textContent = goldN;
+const msBigEl = document.getElementById('msBig');
+const msRowsEl = document.getElementById('msRows');
+const msBtnEl = document.getElementById('msBtn');
+let cardOpen = false, cardQueue = [];
+let roundStartTotal = 0, roundStartGold = 0, roundMaxCombo = 0;
+function digitsHTML(n, big) {
+  const s = String(n);
+  const prefix = big ? 'card-digit-' : 'card-sm-';
+  const h = big ? (s.length <= 3 ? 100 : s.length <= 4 ? 78 : 60) : '';
+  const style = big && h ? ` style="height:${h}px"` : '';
+  return s.split('').map(c => {
+    const f = c === '×' ? 'x' : c;
+    return `<img src="web-assets/${prefix}${f}.png"${style} alt="${c}">`;
+  }).join('');
+}
+function cardRow(labelImg, value) {
+  const valStr = String(value);
+  const valHTML = valStr === '-' ? '<span style="font-size:18px;color:#7a6348">-</span>'
+    : valStr.split('').map(c => {
+        const f = c === '×' ? 'x' : c;
+        if (f === 'x') return `<img class="vx" src="web-assets/card-sm-x.png" alt="${c}">`;
+        if (/[0-9]/.test(f)) return `<img class="vd" src="web-assets/card-sm-${f}.png" alt="${c}">`;
+        return `<img class="vu" src="web-assets/card-gold-unit.png" alt="${c}">`;
+      }).join('');
+  return `<div class="mrow"><div class="mlabel"><img src="web-assets/${labelImg}.png"></div><div class="mval">${valHTML}</div></div>`;
+}
+function currentRoundStats() {
+  return {
+    seeds: total - roundStartTotal,
+    gold: goldN - roundStartGold,
+    combo: roundMaxCombo,
+  };
+}
+function resetRoundStats() {
+  roundStartTotal = total;
+  roundStartGold = goldN;
+  roundMaxCombo = 0;
+}
+function showResultCard(card) {
+  if (cardOpen) { cardQueue.push(card); return; }
+  cardOpen = true;
+  msBigEl.innerHTML = digitsHTML(card.big, true);
+  msRowsEl.innerHTML = card.rows.join('');
+  const angle = (Math.random() * 4 - 2).toFixed(1);
+  const mc = document.getElementById('mcard');
+  mc.style.setProperty('--card-rot', angle + 'deg');
+  const dirs = [
+    'translate(0,-55vh) rotate(-35deg)',
+    'translate(55vw,0) rotate(30deg)',
+    'translate(0,55vh) rotate(25deg)',
+  ];
+  mc.style.setProperty('--card-from', dirs[(Math.random() * 3) | 0]);
   msEl.style.display = 'flex';
-  msEl.style.pointerEvents = 'auto';
-  requestAnimationFrame(() => msEl.classList.add('show'));
+  playPour();
+  requestAnimationFrame(() => {
+    void msEl.offsetHeight;
+    msEl.classList.add('show');
+  });
   milestoneT = 999;
 }
 function hideMilestone() {
   milestoneT = 0;
-  msEl.classList.remove('show');
+  const mc = document.getElementById('mcard');
+  mc.classList.add('fade-out');
   msEl.style.pointerEvents = 'none';
-  setTimeout(() => { msEl.style.display = 'none'; }, 400);
+  cardOpen = false;
+  setTimeout(() => {
+    msEl.classList.remove('show');
+    mc.classList.remove('fade-out');
+    msEl.style.display = 'none';
+    if (!cardOpen && cardQueue.length) showResultCard(cardQueue.shift());
+  }, 400);
 }
-document.getElementById('msBtn').addEventListener('click', hideMilestone);
+function comboRowHTML(combo) {
+  const val = combo ? '×' + combo : '-';
+  const isRecord = combo && combo >= bestCombo && combo > 1;
+  return cardRow('card-combo-label', val)
+    + (isRecord ? '<div class="mnew"><img src="web-assets/card-newrecord.png"></div>' : '');
+}
+function showRoundCard() {
+  if (total <= 0) return;
+  showResultCard({
+    big: total,
+    rows: [
+      cardRow('card-gold-label', goldN + '颗'),
+      comboRowHTML(roundMaxCombo),
+    ],
+  });
+  roundMaxCombo = 0;
+}
+function showBangCard(n) {
+  showResultCard({
+    big: total,
+    rows: [
+      cardRow('card-gold-label', goldN + '颗'),
+      comboRowHTML(roundMaxCombo),
+    ],
+  });
+  roundMaxCombo = 0;
+}
+function showGoldUpgradeCard(tier) {
+  showResultCard({
+    big: goldN,
+    rows: [
+      cardRow('card-gold-label', goldN + '颗'),
+      cardRow('card-combo-label', roundMaxCombo ? '×' + roundMaxCombo : '-'),
+    ],
+  });
+}
+msBtnEl.addEventListener('click', hideMilestone);
+msEl.addEventListener('click', e => { if (e.target === msEl) hideMilestone(); });
 let mouseX = 0, mouseY = 0;
 const confetti = [];  // 全爆清屏后的彩带
 const MAX_CONFETTI = 130;
+const confettiLimit = () => isMobile ? 70 : MAX_CONFETTI;
 let bangCelebrated = true;
 let sweepRemain = 0, sweepLid = 0;  // 清扫中剩余壳数 / 清扫时桶盖开合
 let now = 0;
+let frameNo = 0;
 
 let total = 0;
 let goldN = 0;
@@ -242,7 +361,10 @@ let bagCount = 0;
 let needSweep = false;
 let trashBounce = 0;
 let trashWobble = 0;
+let trashTilt = 0, trashTiltTarget = 0;
 let dunkSweepTimer = -1;
+let trashSpitTimer = -1, trashSpitForce = 0, trashSpitCooldown = 0;
+let trashLidPop = 0;
 // 金瓜子集卡：攒到 10 / 20 / 30 颗，金瓜子落到废纸篓上，桶逐步变金
 // 0 = 普通桶  1 = 金盖  2 = 金盖+金竖纹  3 = 全金桶
 // 长线目标（约 900 次嗑击集满），进度持久化，跨会话累积
@@ -425,7 +547,7 @@ function playCrack(perfect, chainGen = 0) {
   // 完美开壳固定用最脆的嗑瓜子-3，且播得更快更脆
   const a = perfect ? crackSounds[2] : crackSounds[(Math.random() * 3) | 0];
   // 连嗑略快略脆；连锁撞开的音调逐代上扬，让多米诺"听得见"
-  a.playbackRate = (perfect ? 1.18 : 1) + combo * 0.015 + chainGen * 0.08;
+  a.playbackRate = (perfect ? 1.18 : 1) + combo * 0.03 + chainGen * 0.14;
   a.currentTime = 0;
   a.play().catch(() => {});
 }
@@ -465,7 +587,6 @@ function playDunk() {
   dunkSound.currentTime = 0;
   dunkSound.play().catch(() => {});
 }
-
 /* ================= 桌面背景 ================= */
 function paintBG() {
   bgx.fillStyle = '#e9e2d2';
@@ -503,7 +624,7 @@ function bagMetrics() {
   bagDrawH = Math.min(mobile ? 260 : 520, H * (mobile ? 0.34 : 0.68));
   bagDrawW = bagDrawH * ASP.bag;
   if (mobile) {
-    SEED_H = { normal: 68, big: 78, gold: 68 };
+    SEED_H = { normal: 80, big: 92, gold: 80 };
     MAX_SEEDS = 70; POUR_BASE = 12;
     TZ = 39; TRASH_DUNK_RADIUS = 19;
   } else {
@@ -511,7 +632,7 @@ function bagMetrics() {
     MAX_SEEDS = 100; POUR_BASE = 16;
     TZ = 56; TRASH_DUNK_RADIUS = 27;
   }
-}
+  }
 function drawBag(g) {
   g.save();
   const wig = BAG.wig > 0 ? Math.sin(BAG.wig * 22) * 0.04 * BAG.wig : 0;
@@ -519,8 +640,15 @@ function drawBag(g) {
   const bx = bagDrawW * 0.04 + peek, by = bagDrawH * 0.08 + peek;
   g.translate(bx, by);
   g.rotate(-0.78 + wig);
-  drawShadow(g, 16, bagDrawH * 0.42, bagDrawW * 0.36, bagDrawH * 0.07, 0.4);
+  g.shadowColor = 'rgba(62,40,18,0.28)';
+  g.shadowBlur = 10;
+  g.shadowOffsetX = 3;
+  g.shadowOffsetY = 6;
   g.drawImage(ASSETS.bag, -bagDrawW / 2, -bagDrawH * 0.5, bagDrawW, bagDrawH);
+  g.shadowColor = 'transparent';
+  g.shadowBlur = 0;
+  g.shadowOffsetX = 0;
+  g.shadowOffsetY = 0;
   g.restore();
 }
 function mouthPoint() {
@@ -581,7 +709,61 @@ function safeSeedSpot(x, y, h = SEED_H.normal) {
 }
 
 /* ================= 倒瓜子 ================= */
-function findSpot(seedH = SEED_H.normal) {
+function seedSpotClear(x, y, minGap) {
+  const min2 = minGap * minGap;
+  for (const s of seeds) {
+    const dx = x - s.tx, dy = y - s.ty;
+    if (dx * dx + dy * dy < min2) return false;
+  }
+  return true;
+}
+function makePourClusters(n) {
+  let clustered = Math.min(n - 3, Math.round(n * rnd(0.38, 0.52)));
+  if (clustered < 3) return [];
+  const count = Math.min(isMobile ? 3 : 4, Math.max(1, Math.round(clustered / rnd(5, 7))));
+  const slots = Array(n).fill(false);
+  for (let i = 0; i < clustered; i++) {
+    let idx = (Math.random() * n) | 0;
+    for (let guard = 0; guard < n && slots[idx]; guard++) idx = (idx + 1) % n;
+    slots[idx] = true;
+  }
+  for (let i = 0; i < count; i++) {
+    const remainingGroups = count - i;
+    const take = i === count - 1 ? clustered : Math.max(3, Math.min(clustered - (remainingGroups - 1) * 3, 3 + ((Math.random() * 4) | 0)));
+    clustered -= take;
+    const p = safeSeedSpot(
+      W * 0.50 + rnd(-W * 0.28, W * 0.28),
+      H * 0.53 + rnd(-H * 0.22, H * 0.22),
+      SEED_H.normal
+    );
+    pourClusters.push({
+      x: p.x, y: p.y,
+      remain: take,
+      spread: rnd(isMobile ? 22 : 30, isMobile ? 36 : 48),
+    });
+  }
+  return slots;
+}
+function clusterSpot(seedH) {
+  for (let i = pourClusters.length - 1; i >= 0; i--) if (pourClusters[i].remain <= 0) pourClusters.splice(i, 1);
+  if (!pourClusters.length) return null;
+  for (let i = 0; i < 10; i++) {
+    const c = pourClusters[(Math.random() * pourClusters.length) | 0];
+    const a = Math.random() * Math.PI * 2;
+    const r = Math.sqrt(Math.random()) * c.spread;
+    const p = safeSeedSpot(c.x + Math.cos(a) * r, c.y + Math.sin(a) * r, seedH);
+    if (seedSpotClear(p.x, p.y, seedH * 0.34)) {
+      c.remain--;
+      return p;
+    }
+  }
+  return null;
+}
+function findSpot(seedH = SEED_H.normal, clustered = false) {
+  if (clustered) {
+    const p = clusterSpot(seedH);
+    if (p) return p;
+  }
   for (let i = 0; i < 12; i++) {
     const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random());
     const p = safeSeedSpot(
@@ -590,14 +772,11 @@ function findSpot(seedH = SEED_H.normal) {
       seedH
     );
     const x = p.x, y = p.y;
-    let ok = true;
-    for (const s of seeds)
-      if (Math.hypot(x - s.tx, y - s.ty) < 55) { ok = false; break; }
-    if (ok) return { x, y };
+    if (seedSpotClear(x, y, 55)) return { x, y };
   }
   return safeSeedSpot(W * 0.5 + rnd(-W * 0.4, W * 0.4), H * 0.52 + rnd(-H * 0.36, H * 0.36), seedH);
 }
-function spawnSeed(forceType = null) {
+function spawnSeed(forceType = null, clustered = false) {
   const m = mouthPoint();
   // 'nogold'：第一批瓜子里除保底外不允许自然出金，保证首批只有一颗金
   let type;
@@ -606,7 +785,7 @@ function spawnSeed(forceType = null) {
   const variant = rollVariant();
   if (forceType === 'gold') { sinceGold = 0; nextGoldAt = rollGoldTargetGap(); }
   const seedH = SEED_H[type] * rnd(0.95, 1.05);
-  const spot = findSpot(seedH);
+  const spot = findSpot(seedH, clustered);
   seeds.push({
     type, variant,
     H: seedH,
@@ -625,6 +804,7 @@ function pour() {
   BAG.wig = 1;
   if (n <= 0) return;
   if (pourRounds === 0) { firstPourGoldCountdown = (Math.random() * n) | 0; firstBatchRemain = n; }
+  pourClusterSlots.push(...makePourClusters(n));
   pourRounds++;
   pourQueue += n;
   playPour();
@@ -652,6 +832,7 @@ function crackSeed(s, charge = 0, gen = 0) {
     chainCount++;
     if (chainCount >= 5 && now >= bigBangUntil) {
       comboShowN = chainCount; comboShowT = 1.1; comboX = chainX; comboY = chainY; comboPop = 1;
+      roundMaxCombo = Math.max(roundMaxCombo, chainCount);
     }
   }
   // 全爆彩蛋：必须蓄力触发，单击不会引爆；首次保底前 100 颗内必出（?bigbang 必触发）
@@ -743,7 +924,7 @@ function crackSeed(s, charge = 0, gen = 0) {
   // 崩开瞬间的碎渣：向上扇形喷出，瞬时消散；连嗑时更多
   const nCrumb = 4 + ((Math.random() * 3) | 0) + ((combo * 0.5) | 0) + gen * 4;  // 被撞开的碎渣更多，连锁看得见
   for (let c = 0; c < nCrumb; c++) {
-    if (crumbs.length >= MAX_CRUMBS) break;
+    if (crumbs.length >= crumbLimit()) break;
     const ca = -Math.PI / 2 + rnd(-0.6, 0.6);
     const sp = rnd(110, 290) * boost;
     crumbs.push({
@@ -775,11 +956,6 @@ function crackSeed(s, charge = 0, gen = 0) {
     goldN++;
   }
   total++; bagCount++;
-  // 里程碑：本次会话每满 88 颗弹一次小结（全爆庆祝/已有卡时让位）
-  if (total >= nextMilestone && milestoneT <= 0 && bangMsgT <= 0 && now >= bigBangUntil) {
-    nextMilestone += MILESTONE_STEP;
-    showMilestone();
-  }
   refreshCounter();
   // 嗑到 25 颗还没用过蓄力，软提示一次
   if (!chargeHintDone && chargeHintT < 0 && total === 25) chargeHintT = 7;
@@ -874,7 +1050,7 @@ function landGoldDrop() {
   // 档位越高金星越多
   const nParts = 10 + goldTier * 8;
   for (let k = 0; k < nParts; k++) {
-    if (goldParts.length >= MAX_GOLD_PARTS) break;
+    if (goldParts.length >= goldPartLimit()) break;
     const a = Math.random() * Math.PI * 2, sp = rnd(40, 180 + goldTier * 30);
     goldParts.push({
       x: ex, y: ey,
@@ -890,6 +1066,7 @@ function landGoldDrop() {
     [{ transform: 'scale(0.6)', opacity: 0.4 }, { transform: 'scale(1)', opacity: 1 }],
     { duration: 350, easing: 'cubic-bezier(.2,1.6,.4,1)' }
   );
+  showGoldUpgradeCard(goldTier);
 }
 function drawGoldDrop(g) {
   if (!goldDrop) return;
@@ -917,9 +1094,16 @@ function drawTrash(g) {
   const lid = Math.max(trashHover, sweepLid);
   g.save();
   g.translate(tp.x, tp.y + bounce);
-  if (trashWobble > 0) {
-    const wob = Math.sin(trashWobble * 22) * 0.15 * trashWobble;
-    g.translate(0, TZ * 0.48); g.rotate(wob); g.translate(0, -TZ * 0.48);
+  let wob = 0;
+  if (trashSpitTimer > 0) {
+    const p = 1 - trashSpitTimer / 0.55;
+    wob = Math.sin(now * 22) * (0.06 + p * 0.16) * (0.5 + trashSpitForce * 0.5);
+  } else if (trashWobble > 0) {
+    wob = Math.sin(trashWobble * 22) * 0.28 * trashWobble;
+  }
+  const rot = wob + trashTilt;
+  if (Math.abs(rot) > 0.001) {
+    g.translate(0, TZ * 0.48); g.rotate(rot); g.translate(0, -TZ * 0.48);
   }
 
   if (needSweep) {
@@ -1003,9 +1187,11 @@ function drawTrash(g) {
   g.shadowBlur = 0;
 
   // 盖子（悬停时旋转打开；集满第一档金瓜子后变成金盖）
+  const lidPopH = trashLidPop > 0 ? Math.sin(trashLidPop * Math.PI) * TZ * 0.38 : 0;
   g.save();
+  g.translate(0, -lidPopH);
   g.translate(TZ * 0.30, -TZ * 0.22);
-  g.rotate(lid * 0.35);
+  g.rotate(lid * 0.35 + (lidPopH > 0 ? 0.2 * trashLidPop : 0));
   g.translate(-TZ * 0.30, TZ * 0.22);
   if (goldTier >= 1) {
     g.shadowColor = 'rgba(255,205,90,0.45)';
@@ -1197,7 +1383,7 @@ function drawCombo(g) {
   g.restore();
 }
 /* ================= 扫一扫 ================= */
-function sweep() {
+function sweep(showCard = false) {
   if (!shells.length) return;
   ensureAudio(); playSweep();
   for (const sh of shells) {
@@ -1209,6 +1395,7 @@ function sweep() {
   sweepRemain = shells.length;
   lyx.clearRect(0, 0, W, H);
   if (needSweep) { needSweep = false; bagCount = 0; }
+  if (showCard) setTimeout(showRoundCard, 300);
 }
 
 let cursorState = '';
@@ -1240,7 +1427,7 @@ cv.addEventListener('pointerdown', e => {
   mouseX = e.clientX; mouseY = e.clientY;
   ensureAudio();
   unlockAudio();
-  if (trashHitTest(e.clientX, e.clientY)) { sweep(); return; }
+  if (trashHitTest(e.clientX, e.clientY)) { sweep(true); return; }
   if (fishHitTest(e.clientX, e.clientY)) { fishMode = !fishMode; syncBGMVolume(true); fishBounce = 1; return; }
   const s = hitSeed(e.clientX, e.clientY);
   if (s) { s.aimRot = null; s.aimVel = 0; pressedSeed = s; pressStartAt = performance.now(); applyCursor(e.clientX, e.clientY); return; }
@@ -1280,14 +1467,18 @@ cv.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
 let lastBagHint = -2;  // 首次提示提前：加载约 1s 后就晃袋子
 function update(dt) {
   now += dt;
+  frameNo++;
   updateBGM();
+  // 移动端保留碎屑撞瓜子，但限制每帧昂贵的壳×瓜子扫掠检测数量，避免飞溅高峰卡顿。
+  let shellSeedHitBudget = isMobile ? 14 : Infinity;
   if (pourQueue > 0) {
     pourTimer -= dt;
     if (pourTimer <= 0) {
       const forceGold = firstPourGoldCountdown === 0;
       const inFirstBatch = firstBatchRemain > 0;
       if (inFirstBatch) firstBatchRemain--;
-      spawnSeed(forceGold ? 'gold' : inFirstBatch ? 'nogold' : null);
+      const clustered = pourClusterSlots.shift() || false;
+      spawnSeed(forceGold ? 'gold' : inFirstBatch ? 'nogold' : null, clustered);
       if (firstPourGoldCountdown >= 0) firstPourGoldCountdown = forceGold ? -1 : firstPourGoldCountdown - 1;
       pourQueue--;
       pourTimer = 0.05;
@@ -1300,12 +1491,9 @@ function update(dt) {
     lastBagHint = now;
     BAG.wig = 1;
   }
-  // 起手后桌面嗑空：包装自动续杯，让人停不下来（避开全爆庆祝与里程碑卡）
+  // 起手后桌面嗑空：立刻自动续杯，让人不需要等（避开全爆庆祝与结算卡）
   if (tableEmpty && pourRounds > 0 && bangMsgT <= 0 && !confetti.length && milestoneT <= 0) {
-    if (autoPourAt < 0) autoPourAt = now + 0.7;
-    else if (now >= autoPourAt) { autoPourAt = -1; pour(); }
-  } else {
-    autoPourAt = -1;
+    pour();
   }
 
   for (const s of seeds) {
@@ -1339,6 +1527,15 @@ function update(dt) {
     }
   }
 
+  // 多米诺延迟连锁
+  for (let i = pendingCracks.length - 1; i >= 0; i--) {
+    const pc = pendingCracks[i];
+    pc.t -= dt;
+    if (pc.t <= 0) {
+      if (seeds.includes(pc.s) && pc.s.state === 'idle') crackSeed(pc.s, pc.charge, pc.gen);
+      pendingCracks.splice(i, 1);
+    }
+  }
   // 全爆冲击波：到点的瓜子依次炸开（先收集再嗑，避免迭代中改 seeds）
   if (now < bigBangUntil) {
     const due = seeds.filter(o => o.bangAt && o.bangAt <= now && o.state === 'idle');
@@ -1348,10 +1545,11 @@ function update(dt) {
   if (!bangCelebrated && !seeds.length && !pourQueue) {
     bangCelebrated = true;
     bangMsg = total - bangTotalAt;
+    roundMaxCombo = Math.max(roundMaxCombo, bangMsg);
     bangBest = bangMsg > bestCombo;          // 是否刷新最高纪录
     if (bangBest) { bestCombo = bangMsg; try { localStorage.setItem('guazi_best_combo', bestCombo); } catch (e) {} }
     bangMsgT = 4;  // 给录屏的人一个完美的结束帧
-    for (let i = 0; i < 110 && confetti.length < MAX_CONFETTI; i++) {
+    for (let i = 0, limit = confettiLimit(); i < 110 && confetti.length < limit; i++) {
       confetti.push({
         x: rnd(0, W), y: rnd(-260, -10),
         // 喷射出场：高初速 + 空气阻力衰减到飘落终速；delay 错开出场不排队
@@ -1364,6 +1562,7 @@ function update(dt) {
         t: 0, life: rnd(1.7, 2.7),
       });
     }
+    showBangCard(bangMsg);
   }
   for (let i = confetti.length - 1; i >= 0; i--) {
     const c = confetti[i];
@@ -1379,31 +1578,35 @@ function update(dt) {
     c.rot += c.vr * dt * floaty;
   }
 
-  // 闲置瓜子轻推散开：被撞落点不查间距，堆在一起的会自己慢慢分开
-  for (let i = 0; i < seeds.length; i++) {
-    const a = seeds[i];
-    if (a.state !== 'idle' || (a.kickT > 0 && a.kSlide < 1)) continue;
-    for (let j = i + 1; j < seeds.length; j++) {
-      const b = seeds[j];
-      if (b.state !== 'idle' || (b.kickT > 0 && b.kSlide < 1)) continue;
-      let dx = b.x - a.x, dy = b.y - a.y;
-      let d2 = dx * dx + dy * dy;
-      const minD = (a.H + b.H) * 0.30;
-      if (d2 >= minD * minD) continue;
-      if (d2 < 0.01) { const ra = Math.random() * Math.PI * 2; dx = Math.cos(ra); dy = Math.sin(ra); d2 = 1; }
-      const d = Math.sqrt(d2);
-      const push = Math.min(55 * dt, (minD - d) * 0.5);
-      const ux = dx / d, uy = dy / d;
-      const aLock = pressedSeed === a, bLock = pressedSeed === b;  // 被按住的不动，全推给另一颗
-      if (!aLock) {
-        a.x = clamp(a.x - ux * push * (bLock ? 2 : 1), 24, W - 24);
-        a.y = clamp(a.y - uy * push * (bLock ? 2 : 1), 70, H - 24);
-        a.tx = a.x; a.ty = a.y;
-      }
-      if (!bLock) {
-        b.x = clamp(b.x + ux * push * (aLock ? 2 : 1), 24, W - 24);
-        b.y = clamp(b.y + uy * push * (aLock ? 2 : 1), 70, H - 24);
-        b.tx = b.x; b.ty = b.y;
+  // 闲置瓜子轻推散开：移动端隔帧执行，避免每帧 O(n²) 扫全桌。
+  const runSeparation = !isMobile || seeds.length < 18 || frameNo % 3 === 0;
+  if (runSeparation) {
+    const sepDt = dt * (isMobile && seeds.length >= 18 ? 3 : 1);
+    for (let i = 0; i < seeds.length; i++) {
+      const a = seeds[i];
+      if (a.state !== 'idle' || (a.kickT > 0 && a.kSlide < 1)) continue;
+      for (let j = i + 1; j < seeds.length; j++) {
+        const b = seeds[j];
+        if (b.state !== 'idle' || (b.kickT > 0 && b.kSlide < 1)) continue;
+        let dx = b.x - a.x, dy = b.y - a.y;
+        let d2 = dx * dx + dy * dy;
+        const minD = (a.H + b.H) * 0.30;
+        if (d2 >= minD * minD) continue;
+        if (d2 < 0.01) { const ra = Math.random() * Math.PI * 2; dx = Math.cos(ra); dy = Math.sin(ra); d2 = 1; }
+        const d = Math.sqrt(d2);
+        const push = Math.min(55 * sepDt, (minD - d) * 0.5);
+        const ux = dx / d, uy = dy / d;
+        const aLock = pressedSeed === a, bLock = pressedSeed === b;  // 被按住的不动，全推给另一颗
+        if (!aLock) {
+          a.x = clamp(a.x - ux * push * (bLock ? 2 : 1), 24, W - 24);
+          a.y = clamp(a.y - uy * push * (bLock ? 2 : 1), 70, H - 24);
+          a.tx = a.x; a.ty = a.y;
+        }
+        if (!bLock) {
+          b.x = clamp(b.x + ux * push * (aLock ? 2 : 1), 24, W - 24);
+          b.y = clamp(b.y + uy * push * (aLock ? 2 : 1), 70, H - 24);
+          b.tx = b.x; b.ty = b.y;
+        }
       }
     }
   }
@@ -1423,7 +1626,7 @@ function update(dt) {
       sh.suckScale = clamp(d / 160, 0.08, 1);
       if (d < 18) {
         shells.splice(i, 1);
-        if (--sweepRemain <= 0) { sweepRemain = 0; trashBounce = 0.7; }  // 全部进桶，桶弹两下
+        if (--sweepRemain <= 0) { sweepRemain = 0; trashBounce = 0.7; }
       }
       continue;
     }
@@ -1447,33 +1650,56 @@ function update(dt) {
       const t = clamp(((cx - prevX) * mvx + (cy - prevY) * mvy) / ml2, 0, 1);
       return { x: prevX + mvx * t, y: prevY + mvy * t };
     };
-    // 神投手：飞行中的壳撞到废纸篓 → 反弹 + 晃动 + 开盖吸壳
+    // 壳撞到废纸篓 → 反弹 + 晃动 + 蓄力后弹射壳回桌面引爆瓜子
     if (shSpd > 60) {
       const tp = trashPos();
       const tcx = tp.x, tcy = tp.y - 10;
       const q = segNearest(tcx, tcy);
       const tdx = q.x - tcx, tdy = q.y - tcy;
-      if (Math.hypot(tdx, tdy) < TRASH_DUNK_RADIUS) {
+      if (Math.hypot(tdx, tdy) < TRASH_DUNK_RADIUS && !sh.fromTrash && !sh.hitTrash) {
         const nd = Math.hypot(tdx, tdy) || 1;
         const nx = tdx / nd, ny = tdy / nd;
         const dot = sh.vx * nx + sh.vy * ny;
         sh.vx = (sh.vx - 2 * dot * nx) * 0.55;
         sh.vy = (sh.vy - 2 * dot * ny) * 0.55;
-        sh.x = tcx + nx * 30; sh.y = tcy + ny * 30;
-        trashWobble = 1;
-        trashBounce = 0.6;
+        sh.x = tcx + nx * (TRASH_DUNK_RADIUS + 12); sh.y = tcy + ny * (TRASH_DUNK_RADIUS + 12);
+        sh.hitTrash = true;
+        const hitF = clamp(shSpd / 1200, 0.3, 1);
+        trashWobble = Math.max(trashWobble, hitF);
+        trashBounce = Math.max(trashBounce, hitF * 0.7);
+        trashLidPop = Math.max(trashLidPop, hitF);
         playDunk();
-        if (dunkSweepTimer < 0 && sweepRemain <= 0) dunkSweepTimer = 0.9;
+        for (let c = 0; c < 6; c++) {
+          if (crumbs.length >= crumbLimit()) break;
+          const ca = Math.atan2(ny, nx) + rnd(-0.8, 0.8);
+          crumbs.push({
+            x: tcx + nx * 18 + rnd(-4, 4), y: tcy + ny * 18 + rnd(-4, 4),
+            vx: Math.cos(ca) * rnd(60, 180), vy: Math.sin(ca) * rnd(60, 180),
+            life: rnd(0.25, 0.4), t: 0, size: rnd(1.2, 2.8),
+            col: Math.random() < 0.4 ? '#6e563a' : '#8a6d48',
+          });
+        }
+        if (trashSpitCooldown <= 0 && trashSpitTimer < 0 && seeds.length > 0) {
+          trashSpitForce = clamp(shSpd / 1600, 0.2, 1);
+          trashSpitTimer = 0.55;
+          trashTiltTarget = -0.52;
+        } else if (trashSpitTimer > 0) {
+          trashSpitForce = Math.max(trashSpitForce, clamp(shSpd / 1600, 0.2, 1));
+        }
         continue;
       }
       // 壳砸中桌上的瓜子：猛击直接撞开（可连锁），其余撞得弹一下被推开
-      if (shSpd > 80) {
+      if (shSpd > 80 && (now < bigBangUntil || shellSeedHitBudget-- > 0)) {
         const bigBang = now < bigBangUntil;  // 全爆窗口：不限代数、不限数量、低门槛
         const canChain = bigBang || (sh.gen ?? 0) < 2;  // 平时连锁最多传两代
         const chainSpd = bigBang ? 200 : 650;
         let chainHits = null;
+        const pathMinX = Math.min(prevX, sh.x), pathMaxX = Math.max(prevX, sh.x);
+        const pathMinY = Math.min(prevY, sh.y), pathMaxY = Math.max(prevY, sh.y);
         for (const s2 of seeds) {
           if (s2.state !== 'idle' || s2.kickT > 0) continue;
+          const broad = s2.H * 0.55 + (isMobile ? 18 : 28);
+          if (s2.x < pathMinX - broad || s2.x > pathMaxX + broad || s2.y < pathMinY - broad || s2.y > pathMaxY + broad) continue;
           const c = segNearest(s2.x, s2.y);
           const sdx = s2.x - c.x, sdy = s2.y - c.y;
           const hitR = s2.H * 0.32;
@@ -1496,13 +1722,16 @@ function update(dt) {
           }
         }
         if (chainHits) {
-          // 动量传递：撞得越猛，被撞开的瓜子壳飞得也越猛，连锁有机会传下去但逐代衰减
-          chainHits.sort((p, q) => p.d - q.d);  // 按飞行路径先后排序
+          chainHits.sort((p, q) => p.d - q.d);
           const passCharge = bigBang ? 0.7 : clamp((shSpd - 650) / 2400, 0.15, 0.6) * (sh.gen ? 0.5 : 1);
           const nextGen = (sh.gen ?? 0) + 1;
-          // 平时一片壳最多撞开 2 颗；全爆窗口不限
-          for (const h of (bigBang ? chainHits : chainHits.slice(0, 2))) crackSeed(h.s, passCharge, nextGen);
-          sh.vx *= 0.6; sh.vy *= 0.6;  // 撞开瓜子损失动能
+          const hits = bigBang ? chainHits : chainHits.slice(0, 2);
+          for (let hi = 0; hi < hits.length; hi++) {
+            const delay = hi * 0.06;
+            if (delay < 0.01) { crackSeed(hits[hi].s, passCharge, nextGen); }
+            else { pendingCracks.push({ s: hits[hi].s, charge: passCharge, gen: nextGen, t: delay }); }
+          }
+          sh.vx *= 0.6; sh.vy *= 0.6;
         }
       }
     }
@@ -1530,7 +1759,7 @@ function update(dt) {
           const tp = trashPos();
           for (let c = 0; c < 6; c++) {
             const a = Math.random() * Math.PI * 2, sp = rnd(30, 120);
-            if (goldParts.length >= MAX_GOLD_PARTS) break;
+            if (goldParts.length >= goldPartLimit()) break;
             goldParts.push({
               x: tp.x, y: tp.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 30,
               life: rnd(0.4, 0.9), t: 0, size: rnd(2.5, 5),
@@ -1549,7 +1778,7 @@ function update(dt) {
       const p = Math.min(1, k.t / 0.4);
       const cx = k.x + k.dx * p, cy = k.y + k.dy * p;
       for (let c = 0; c < 3; c++) {
-        if (crumbs.length >= MAX_CRUMBS) break;
+        if (crumbs.length >= crumbLimit()) break;
         crumbs.push({
           x: cx + rnd(-10, 10), y: cy + rnd(-10, 10),
           vx: rnd(-70, 70), vy: rnd(-80, 10),
@@ -1574,10 +1803,59 @@ function update(dt) {
   }
   if (shake.t > 0) shake.t -= dt;
   if (trashBounce > 0) trashBounce = Math.max(0, trashBounce - dt * 1.8);
-  if (trashWobble > 0) trashWobble = Math.max(0, trashWobble - dt * 2.2);
+  if (trashWobble > 0 && trashSpitTimer < 0) trashWobble = Math.max(0, trashWobble - dt * 2.2);
+  if (trashLidPop > 0) trashLidPop = Math.max(0, trashLidPop - dt * 3);
+  if (trashSpitCooldown > 0) trashSpitCooldown -= dt;
+  trashTilt += (trashTiltTarget - trashTilt) * Math.min(1, dt * 10);
   if (dunkSweepTimer >= 0) {
     dunkSweepTimer -= dt;
     if (dunkSweepTimer < 0) { dunkSweepTimer = -1; sweep(); }
+  }
+  // 垃圾桶弹射：倾斜 → 张嘴 → 喷壳
+  if (trashSpitTimer >= 0) {
+    trashSpitTimer -= dt;
+    if (trashSpitTimer < 0) {
+      trashSpitTimer = -1;
+      trashSpitCooldown = 0.6;
+      const tp = trashPos();
+      const n = (!isMobile && trashSpitForce > 0.9 && Math.random() < 0.03) ? 20
+        : isMobile ? 1 + ((Math.random() * 4) | 0)
+        : 1 + ((Math.random() * 10) | 0);
+      const spd = 2500 + trashSpitForce * 3500;
+      trashBounce = 0.8;
+      trashWobble = 1;
+      sweepLid = 1;
+      // 从倾斜后的桶口位置发射
+      const pivotY = TZ * 0.48;
+      const mouthDist = TZ * 0.70;
+      const sx = tp.x + Math.sin(trashTilt) * mouthDist;
+      const sy = tp.y + pivotY - Math.cos(trashTilt) * mouthDist;
+      for (let k = 0; k < n; k++) {
+        const a = -Math.PI * 3 / 4 + rnd(-Math.PI / 4, Math.PI / 4);
+        const s = spd * rnd(0.7, 1);
+        const isDebris = Math.random() < 0.35;
+        const baseH = (isMobile ? SEED_H.normal : 78) * 0.82;
+        shells.push({
+          kind: isDebris ? 'debris' : 'shell',
+          variant: Math.random() < 0.5 ? 'thin' : 'fat',
+          oldShell: !isDebris && Math.random() < 0.5,
+          imgKey: isDebris ? (Math.random() < 0.5 ? 'debris4' : 'debris5') : null,
+          H: baseH * (isDebris ? rnd(0.85, 1.05) : 1),
+          side: Math.random() < 0.5 ? -1 : 1,
+          x: sx, y: sy,
+          vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+          rot: rnd(0, Math.PI * 2), vr: rnd(-12, 12),
+          damp: 2.8, hopT: 0.9, hopA: 26,
+          gen: 1, fromTrash: true,
+          t: 0, settled: false, stamped: false, swept: false, sweepDelay: 0,
+          shAl: isDebris ? rnd(0.15, 0.25) : rnd(0.3, 0.4),
+          shOx: 3, shOy: 4,
+          shW: isDebris ? rnd(0.4, 0.52) : 0.6,
+          shHr: isDebris ? rnd(0.16, 0.24) : 0.28,
+        });
+      }
+      trashTiltTarget = 0;
+    }
   }
   if (goldDropDelay >= 0) {
     goldDropDelay -= dt;
@@ -1603,7 +1881,7 @@ function update(dt) {
   if (comboPop > 0) comboPop = Math.max(0, comboPop - dt * 4);
   if (milestoneT > 0) { milestoneT -= dt; if (milestoneT <= 0) hideMilestone(); }
   trashHover += (trashHoverTarget - trashHover) * Math.min(1, dt * 10);
-  sweepLid += (((sweepRemain > 0 || dunkSweepTimer > 0) ? 1 : 0) - sweepLid) * Math.min(1, dt * 8);
+  sweepLid += (((sweepRemain > 0 || dunkSweepTimer > 0 || trashSpitTimer > 0 || trashTiltTarget < 0) ? 1 : 0) - sweepLid) * Math.min(1, dt * 8);
   // 图标需悬停 0.6s 才浮现，避免鼠标扫过就暴露
   fishHover += (((fishHoverTarget && fishHoverTime > 0.6) ? 1 : 0) - fishHover) * Math.min(1, dt * 8);
   fishHoverTime = fishHoverTarget ? fishHoverTime + dt : 0;
