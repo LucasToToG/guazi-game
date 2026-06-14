@@ -22,7 +22,7 @@
   #loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
     background:#e9e2d2;z-index:100;font:500 18px/1 "PingFang SC","Microsoft YaHei",sans-serif;color:#6b513a;}
   #milestone{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;
-    background:transparent;pointer-events:none;cursor:pointer;}
+    background:transparent;pointer-events:none;cursor:pointer;transition:background .35s ease;}
   #milestone.show{pointer-events:auto;}
   #mcard{position:relative;width:360px;max-width:88vw;aspect-ratio:1632/1968;
     display:flex;flex-direction:column;align-items:center;
@@ -34,6 +34,12 @@
     filter:saturate(0.75);z-index:-1;}
   #milestone.show #mcard{transform:translate(0,0) rotate(var(--card-rot,-1deg)) !important;opacity:1;}
   #mcard.fade-out{opacity:0 !important;transform:translate(0,0) rotate(var(--card-rot,-1deg)) !important;}
+  @media(max-width:599px){
+    #milestone.show{background:rgba(0,0,0,0.35);}
+    #mcard{transform:none !important;opacity:0;transition:opacity .3s ease !important;will-change:opacity;}
+    #milestone.show #mcard{transform:none !important;opacity:1;}
+    #mcard.fade-out{transform:none !important;opacity:0 !important;}
+  }
   #mcard .mtitle{margin-top:10%;}
   #mcard .mtitle img{height:41px;}
   #mcard .mbig{display:flex;align-items:flex-end;justify-content:center;gap:2px;margin:6px 0 0;}
@@ -87,6 +93,15 @@ const IMG_SRC = {
   bag:'web-assets/bag.png',
   trashBody:'web-assets/trash-body.png', trashLid:'web-assets/trash-lid.png', trashBars:'web-assets/trash-bars.png',
 };
+const CARD_PRELOAD = [
+  '素材/结算卡-背景.png', '素材/结算卡-继续按钮.png',
+  'web-assets/card-title.png', 'web-assets/card-unit.png',
+  'web-assets/card-gold-label.png', 'web-assets/card-combo-label.png',
+  'web-assets/card-gold-unit.png', 'web-assets/card-newrecord.png',
+  ...[0,1,2,3,4,5,6,7,8,9].map(d => 'web-assets/card-digit-' + d + '.png'),
+  ...[0,1,2,3,4,5,6,7,8,9].map(d => 'web-assets/card-sm-' + d + '.png'),
+  'web-assets/card-sm-x.png',
+];
 const loadingEl = document.getElementById('loading');
 const imgEntries = Object.entries(IMG_SRC);
 let loadedImgs = 0;
@@ -110,6 +125,7 @@ Promise.all(Object.entries(IMG_SRC).map(([k, src]) =>
   })
 )).then(() => {
   for (const [k, img] of Object.entries(ASSETS)) ASP[k] = img.width / img.height;
+  CARD_PRELOAD.forEach(src => { const i = new Image(); i.src = src; });
   init();
 }).catch(src => {
   loadingEl.textContent = '素材加载失败: ' + src;
@@ -172,8 +188,22 @@ const MAX_GOLD_PARTS = 80;
 const crumbLimit = () => isMobile ? 30 : MAX_CRUMBS;
 const goldPartLimit = () => isMobile ? 20 : MAX_GOLD_PARTS;
 
-const SPRITES = {};
-for (const k of ['seedThin', 'seedFat']) SPRITES[k] = ASSETS[k];
+const SPRITES = {}, SEED_SHADOW = {};
+for (const k of ['seedThin', 'seedFat']) {
+  const h = 220, w = Math.ceil(h * ASP[k]);
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  c.getContext('2d').drawImage(ASSETS[k], 0, 0, w, h);
+  SPRITES[k] = c;
+  const sc = document.createElement('canvas');
+  sc.width = w; sc.height = h;
+  const sg = sc.getContext('2d');
+  sg.drawImage(c, 0, 0);
+  sg.globalCompositeOperation = 'source-in';
+  sg.fillStyle = '#3a2810';
+  sg.fillRect(0, 0, w, h);
+  SEED_SHADOW[k] = sc;
+}
 let sinceGold = 99;  // 距上一颗金瓜子的间隔，刚出过金则压低概率防连出
 function rollGoldTargetGap() {
   return goldN >= 5 ? 14 + ((Math.random() * 27) | 0) : 20 + ((Math.random() * 40) | 0);
@@ -269,15 +299,17 @@ function showResultCard(card) {
   cardOpen = true;
   msBigEl.innerHTML = digitsHTML(card.big, true);
   msRowsEl.innerHTML = card.rows.join('');
-  const angle = (Math.random() * 4 - 2).toFixed(1);
   const mc = document.getElementById('mcard');
-  mc.style.setProperty('--card-rot', angle + 'deg');
-  const dirs = [
-    'translate(0,-55vh) rotate(-35deg)',
-    'translate(55vw,0) rotate(30deg)',
-    'translate(0,55vh) rotate(25deg)',
-  ];
-  mc.style.setProperty('--card-from', dirs[(Math.random() * 3) | 0]);
+  if (!_mobileCheck) {
+    const angle = (Math.random() * 4 - 2).toFixed(1);
+    mc.style.setProperty('--card-rot', angle + 'deg');
+    const dirs = [
+      'translate(0,-55vh) rotate(-35deg)',
+      'translate(55vw,0) rotate(30deg)',
+      'translate(0,55vh) rotate(25deg)',
+    ];
+    mc.style.setProperty('--card-from', dirs[(Math.random() * 3) | 0]);
+  }
   msEl.style.display = 'flex';
   playPour();
   requestAnimationFrame(() => {
@@ -617,7 +649,7 @@ function bagMetrics() {
   bagDrawH = Math.min(mobile ? 260 : 520, H * (mobile ? 0.34 : 0.68));
   bagDrawW = bagDrawH * ASP.bag;
   if (mobile) {
-    SEED_H = { normal: 80, big: 92, gold: 80 };
+    SEED_H = { normal: 96, big: 110, gold: 96 };
     MAX_SEEDS = 50; POUR_BASE = 10;
     TZ = 39; TRASH_DUNK_RADIUS = 19;
   } else {
@@ -626,20 +658,21 @@ function bagMetrics() {
     TZ = 56; TRASH_DUNK_RADIUS = 27;
   }
   }
-let _bagShadowC = null, _bagShadowW = 0, _bagShadowH = 0;
+let _bagShadowC = null, _bagShadowW = 0, _bagShadowDPR = 0;
 function ensureBagShadow() {
-  if (_bagShadowW === bagDrawW) return;
-  _bagShadowW = bagDrawW;
+  if (_bagShadowW === bagDrawW && _bagShadowDPR === DPR) return;
+  _bagShadowW = bagDrawW; _bagShadowDPR = DPR;
   const pad = 30;
   const cw = bagDrawW + pad * 2, ch = bagDrawH + pad * 2;
   _bagShadowC = _bagShadowC || document.createElement('canvas');
-  _bagShadowC.width = cw; _bagShadowC.height = ch;
+  _bagShadowC.width = cw * DPR; _bagShadowC.height = ch * DPR;
   const sg = _bagShadowC.getContext('2d');
+  sg.setTransform(DPR, 0, 0, DPR, 0, 0);
   sg.clearRect(0, 0, cw, ch);
   sg.shadowColor = 'rgba(62,40,18,0.28)';
-  sg.shadowBlur = 10;
-  sg.shadowOffsetX = 3;
-  sg.shadowOffsetY = 6;
+  sg.shadowBlur = 10 * DPR;
+  sg.shadowOffsetX = 3 * DPR;
+  sg.shadowOffsetY = 6 * DPR;
   sg.drawImage(ASSETS.bag, pad, pad, bagDrawW, bagDrawH);
 }
 function drawBag(g) {
@@ -652,7 +685,8 @@ function drawBag(g) {
   if (!isMobile) {
     ensureBagShadow();
     const pad = 30;
-    g.drawImage(_bagShadowC, -bagDrawW / 2 - pad, -bagDrawH * 0.5 - pad);
+    g.drawImage(_bagShadowC, 0, 0, _bagShadowC.width, _bagShadowC.height,
+      -bagDrawW / 2 - pad, -bagDrawH * 0.5 - pad, bagDrawW + pad * 2, bagDrawH + pad * 2);
   } else {
     g.drawImage(ASSETS.bag, -bagDrawW / 2, -bagDrawH * 0.5, bagDrawW, bagDrawH);
   }
@@ -1032,7 +1066,8 @@ let TRASH_DUNK_RADIUS = 27;
 let trashHover = 0;
 let trashHoverTarget = 0;
 
-function trashPos() { const m = W < 600; return { x: W - (m ? 24 : 46), y: H - (m ? 28 : 46) }; }
+const _tp = { x: 0, y: 0 };
+function trashPos() { _tp.x = W - (isMobile ? 24 : 46); _tp.y = H - (isMobile ? 28 : 46); return _tp; }
 function startGoldDrop() {
   const img = goldCounterEl.querySelector('img');
   const r = img.getBoundingClientRect();
@@ -1218,8 +1253,7 @@ function drawTrash(g) {
   }
   g.shadowColor = 'transparent';
   g.shadowBlur = 0;
-  if (goldTier >= 1) {
-    // 偶尔闪一下的小金星
+  if (!isMobile && goldTier >= 1) {
     const tw = Math.max(0, Math.sin(now * 1.6)) ** 6;
     if (tw > 0.05) {
       g.save();
@@ -1477,7 +1511,7 @@ function update(dt) {
   frameNo++;
   updateBGM();
   // 移动端保留碎屑撞瓜子，但限制每帧昂贵的壳×瓜子扫掠检测数量，避免飞溅高峰卡顿。
-  let shellSeedHitBudget = isMobile ? 14 : Infinity;
+  let shellSeedHitBudget = isMobile ? 6 : Infinity;
   if (pourQueue > 0) {
     pourTimer -= dt;
     if (pourTimer <= 0) {
@@ -1586,9 +1620,9 @@ function update(dt) {
   }
 
   // 闲置瓜子轻推散开：移动端隔帧执行，避免每帧 O(n²) 扫全桌。
-  const runSeparation = !isMobile || seeds.length < 18 || frameNo % 3 === 0;
+  const runSeparation = !isMobile || seeds.length < 12 || frameNo % 5 === 0;
   if (runSeparation) {
-    const sepDt = dt * (isMobile && seeds.length >= 18 ? 3 : 1);
+    const sepDt = dt * (isMobile && seeds.length >= 12 ? 5 : 1);
     for (let i = 0; i < seeds.length; i++) {
       const a = seeds[i];
       if (a.state !== 'idle' || (a.kickT > 0 && a.kSlide < 1)) continue;
@@ -1972,63 +2006,99 @@ function render() {
       continue;
     }
 
-    // 普通仁：分两口啃掉
     const bites = k.bites;
-    if (!isMobile) drawShadow(ctx, x, y + 6, kw * 0.6 * (1 - bites * 0.35), k.H * 0.32 * (1 - bites * 0.3), 0.28);
-    ctx.save();
-    const flipRot = k.flip ? Math.PI * 2 * easeOutCubic(Math.min(1, k.t / 0.55)) : 0;
-    ctx.translate(x, y); ctx.rotate(k.rot + flipRot); ctx.scale(sc, sc);
-    if (bites > 0) {
-      const bitY = bites === 1 ? -k.H * 0.05 : k.H * 0.25;
-      const bw = kw * 1.3;
-      const step = bw / 3;
-      ctx.beginPath();
-      ctx.moveTo(-bw / 2, bitY);
-      for (let b = 0; b < 3; b++) ctx.arc(-bw / 2 + step * (b + 0.5), bitY, step / 2, Math.PI, 0, true);
-      ctx.lineTo(bw / 2, k.H);
-      ctx.lineTo(-bw / 2, k.H);
-      ctx.closePath();
-      ctx.clip();
+    if (isMobile) {
+      ctx.save();
+      ctx.globalAlpha = bites >= 2 ? Math.max(0, 1 - (k.t - 1.0) * 5) : bites === 1 ? 0.6 : 1;
+      ctx.translate(x, y); ctx.rotate(k.rot); ctx.scale(sc * (1 - bites * 0.2), sc * (1 - bites * 0.2));
+      ctx.drawImage(kImg, -kw / 2, -k.H / 2, kw, k.H);
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    } else {
+      drawShadow(ctx, x, y + 6, kw * 0.6 * (1 - bites * 0.35), k.H * 0.32 * (1 - bites * 0.3), 0.28);
+      ctx.save();
+      const flipRot = k.flip ? Math.PI * 2 * easeOutCubic(Math.min(1, k.t / 0.55)) : 0;
+      ctx.translate(x, y); ctx.rotate(k.rot + flipRot); ctx.scale(sc, sc);
+      if (bites > 0) {
+        const bitY = bites === 1 ? -k.H * 0.05 : k.H * 0.25;
+        const bw = kw * 1.3;
+        const step = bw / 3;
+        ctx.beginPath();
+        ctx.moveTo(-bw / 2, bitY);
+        for (let b = 0; b < 3; b++) ctx.arc(-bw / 2 + step * (b + 0.5), bitY, step / 2, Math.PI, 0, true);
+        ctx.lineTo(bw / 2, k.H);
+        ctx.lineTo(-bw / 2, k.H);
+        ctx.closePath();
+        ctx.clip();
+      }
+      ctx.drawImage(kImg, -kw / 2, -k.H / 2, kw, k.H);
+      ctx.restore();
     }
-    ctx.drawImage(kImg, -kw / 2, -k.H / 2, kw, k.H);
-    ctx.restore();
   }
 
-  // 嚼渣
   for (const c of crumbs) {
     const f = 1 - c.t / c.life;
     ctx.globalAlpha = f * 0.9;
     ctx.fillStyle = c.col || '#d9bc8a';
-    ctx.beginPath(); ctx.arc(c.x, c.y, c.size * f, 0, Math.PI * 2); ctx.fill();
+    if (isMobile) {
+      const r = c.size * f;
+      ctx.fillRect(c.x - r, c.y - r, r * 2, r * 2);
+    } else {
+      ctx.beginPath(); ctx.arc(c.x, c.y, c.size * f, 0, Math.PI * 2); ctx.fill();
+    }
   }
   ctx.globalAlpha = 1;
 
-  // 瓜子
   for (const s of seeds) {
     const aspK = s.variant === 'thin' ? 'seedThin' : 'seedFat';
     const img = SPRITES[aspK];
     const w = s.H * ASP[aspK];
     const idle = s.state === 'idle';
-    let hop = (s.hop || 0) + (!isMobile && idle ? Math.sin(now * s.wspd * 1.6 + s.phase) * 1.6 : 0);
-    let wobble = !isMobile && idle ? Math.sin(now * s.wspd + s.phase * 1.7) * 0.022 : 0;
-    // 被飞壳砸中：弹两下并晃动，逐渐平息
-    if (s.kickT > 0) {
-      const kp = 1 - s.kickT / 0.85;
-      const impact = s.kickImpact || 1;
-      hop += Math.abs(Math.sin(kp * Math.PI * 2.4)) * 64 * impact * (1 - kp);
-      wobble += Math.sin(kp * 16) * 0.56 * impact * (1 - kp) + (s.kickSpin || 0) * (1 - kp);
-    }
     const pr = s.pressT;
-    // 按压时影子变大变深：压扁=更贴桌面的重量感
-    const shAl = s.state === 'fly' ? 0.2 + 0.35 * Math.min(1, s.t / s.dur) : 0.5 + 0.18 * pr;
-    drawShadow(ctx, s.x + 3, s.y + 5, w * (0.55 + 0.07 * pr), s.H * (0.38 + 0.06 * pr), shAl);
-    ctx.save();
-    ctx.translate(s.x, s.y - hop);
-    ctx.rotate((s.state === 'fly' ? (s.drawRot ?? s.rot) : s.rot) + wobble);
-    ctx.scale(1 + 0.08 * pr, 1 - 0.12 * pr);
-    if (s.state === 'fly') { const p = Math.min(1, s.t / s.dur); ctx.scale(0.6 + 0.4 * easeOutCubic(p), 0.6 + 0.4 * easeOutCubic(p)); }
-    ctx.drawImage(img, -w / 2, -s.H / 2, w, s.H);
-    ctx.restore();
+    if (isMobile) {
+      let hop = s.hop || 0;
+      let wobble = 0;
+      if (s.kickT > 0) {
+        const kp = 1 - s.kickT / 0.85;
+        const impact = s.kickImpact || 1;
+        hop += Math.abs(Math.sin(kp * Math.PI * 2.4)) * 64 * impact * (1 - kp);
+        wobble = Math.sin(kp * 16) * 0.56 * impact * (1 - kp) + (s.kickSpin || 0) * (1 - kp);
+      }
+      const sRot = (s.state === 'fly' ? (s.drawRot ?? s.rot) : s.rot) + wobble;
+      const shImg = SEED_SHADOW[aspK];
+      ctx.save();
+      ctx.globalAlpha = s.state === 'fly' ? 0.2 : 0.35;
+      ctx.translate(s.x + 3, s.y + 5);
+      ctx.rotate(sRot);
+      ctx.scale(0.9 + 0.07 * pr, 0.8 + 0.05 * pr);
+      ctx.drawImage(shImg, -w / 2, -s.H / 2, w, s.H);
+      ctx.restore();
+      ctx.save();
+      ctx.translate(s.x, s.y - hop);
+      ctx.rotate(sRot);
+      if (pr > 0.01) ctx.scale(1 + 0.08 * pr, 1 - 0.12 * pr);
+      if (s.state === 'fly') { const p = Math.min(1, s.t / s.dur); const sc = 0.6 + 0.4 * easeOutCubic(p); ctx.scale(sc, sc); }
+      ctx.drawImage(img, -w / 2, -s.H / 2, w, s.H);
+      ctx.restore();
+    } else {
+      let hop = (s.hop || 0) + (idle ? Math.sin(now * s.wspd * 1.6 + s.phase) * 1.6 : 0);
+      let wobble = idle ? Math.sin(now * s.wspd + s.phase * 1.7) * 0.022 : 0;
+      if (s.kickT > 0) {
+        const kp = 1 - s.kickT / 0.85;
+        const impact = s.kickImpact || 1;
+        hop += Math.abs(Math.sin(kp * Math.PI * 2.4)) * 64 * impact * (1 - kp);
+        wobble += Math.sin(kp * 16) * 0.56 * impact * (1 - kp) + (s.kickSpin || 0) * (1 - kp);
+      }
+      const shAl = s.state === 'fly' ? 0.2 + 0.35 * Math.min(1, s.t / s.dur) : 0.5 + 0.18 * pr;
+      drawShadow(ctx, s.x + 3, s.y + 5, w * (0.55 + 0.07 * pr), s.H * (0.38 + 0.06 * pr), shAl);
+      ctx.save();
+      ctx.translate(s.x, s.y - hop);
+      ctx.rotate((s.state === 'fly' ? (s.drawRot ?? s.rot) : s.rot) + wobble);
+      ctx.scale(1 + 0.08 * pr, 1 - 0.12 * pr);
+      if (s.state === 'fly') { const p = Math.min(1, s.t / s.dur); ctx.scale(0.6 + 0.4 * easeOutCubic(p), 0.6 + 0.4 * easeOutCubic(p)); }
+      ctx.drawImage(img, -w / 2, -s.H / 2, w, s.H);
+      ctx.restore();
+    }
   }
 
   ctx.fillStyle = '#ffd76e';
@@ -2105,7 +2175,7 @@ function loop(ts) {
 function resize() {
   W = window.innerWidth; H = window.innerHeight;
   isMobile = W < 600;
-  DPR = Math.min(window.devicePixelRatio || 1, isMobile ? 1 : 2);
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
   for (const [c, g] of [[cv, ctx], [bg, bgx], [layer, lyx]]) {
     c.width = W * DPR; c.height = H * DPR;
     g.setTransform(DPR, 0, 0, DPR, 0, 0);
