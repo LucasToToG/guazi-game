@@ -130,7 +130,6 @@ Promise.all(Object.entries(IMG_SRC).map(([k, src]) =>
   warmup.width = 2; warmup.height = 2;
   const wg = warmup.getContext('2d');
   for (const img of Object.values(ASSETS)) wg.drawImage(img, 0, 0, 1, 1);
-  [...crackSounds, ...eatSounds, pourSound, goldSound, sweepSound, dunkSound].forEach(a => { a.preload = 'auto'; });
   Promise.all(cardImgs.map(i => i.decode ? i.decode().catch(() => {}) : Promise.resolve())).then(() => {
     for (const i of cardImgs) wg.drawImage(i, 0, 0, 1, 1);
     init();
