@@ -169,18 +169,11 @@ let MAX_SEEDS = 100;
 let POUR_BASE = 16;  // 每次倒出的基础数量
 const MAX_CRUMBS = 90;
 const MAX_GOLD_PARTS = 80;
-const crumbLimit = () => isMobile ? 55 : MAX_CRUMBS;
-const goldPartLimit = () => isMobile ? 45 : MAX_GOLD_PARTS;
+const crumbLimit = () => isMobile ? 30 : MAX_CRUMBS;
+const goldPartLimit = () => isMobile ? 20 : MAX_GOLD_PARTS;
 
-/* 预缩放精灵：原图近千像素高，每帧实时缩放太贵；先缩到展示尺寸的 2 倍 */
 const SPRITES = {};
-for (const k of ['seedThin', 'seedFat']) {
-  const h = 220, w = Math.ceil(h * ASP[k]);
-  const c = document.createElement('canvas');
-  c.width = w; c.height = h;
-  c.getContext('2d').drawImage(ASSETS[k], 0, 0, w, h);
-  SPRITES[k] = c;
-}
+for (const k of ['seedThin', 'seedFat']) SPRITES[k] = ASSETS[k];
 let sinceGold = 99;  // 距上一颗金瓜子的间隔，刚出过金则压低概率防连出
 function rollGoldTargetGap() {
   return goldN >= 5 ? 14 + ((Math.random() * 27) | 0) : 20 + ((Math.random() * 40) | 0);
@@ -347,7 +340,7 @@ msEl.addEventListener('click', e => { if (e.target === msEl) hideMilestone(); })
 let mouseX = 0, mouseY = 0;
 const confetti = [];  // 全爆清屏后的彩带
 const MAX_CONFETTI = 130;
-const confettiLimit = () => isMobile ? 70 : MAX_CONFETTI;
+const confettiLimit = () => isMobile ? 35 : MAX_CONFETTI;
 let bangCelebrated = true;
 let sweepRemain = 0, sweepLid = 0;  // 清扫中剩余壳数 / 清扫时桶盖开合
 let now = 0;
@@ -412,14 +405,14 @@ function refreshCounter() {
 refreshCounter();
 
 /* ================= 音效 ================= */
-const crackSounds = [new Audio('音效/嗑瓜子-1.WAV'), new Audio('音效/嗑瓜子-2.WAV'), new Audio('音效/嗑瓜子-3.WAV')];
-const eatSounds = [new Audio('音效/吃瓜子仁-1.WAV'), new Audio('音效/吃瓜子仁-2.WAV')];
-const pourSound = new Audio('音效/倒瓜子.WAV');
-const goldSound = new Audio('音效/金瓜子.WAV');
-const sweepSound = new Audio('音效/清扫声.WAV');
-const dunkSound = new Audio('音效/废纸篓碰撞.WAV');
+const crackSounds = [new Audio('音效/嗑瓜子-1.m4a'), new Audio('音效/嗑瓜子-2.m4a'), new Audio('音效/嗑瓜子-3.m4a')];
+const eatSounds = [new Audio('音效/吃瓜子仁-1.m4a'), new Audio('音效/吃瓜子仁-2.m4a')];
+const pourSound = new Audio('音效/倒瓜子.m4a');
+const goldSound = new Audio('音效/金瓜子.m4a');
+const sweepSound = new Audio('音效/清扫声.m4a');
+const dunkSound = new Audio('音效/废纸篓碰撞.m4a');
 const _mobileCheck = window.innerWidth < 600;
-const bgmTracks = _mobileCheck ? [] : [new Audio('音效/背景音乐1.mp3'), new Audio('音效/背景音乐2.mp3')];
+const bgmTracks = _mobileCheck ? [] : [new Audio('音效/背景音乐1.m4a'), new Audio('音效/背景音乐2.m4a')];
 [...crackSounds, ...eatSounds, pourSound, goldSound, sweepSound, dunkSound, ...bgmTracks].forEach(a => { a.preload = 'auto'; a._vol = 1; });
 eatSounds.forEach(a => a._vol = 0.4);
 const BGM_VOLUME = 0;
@@ -625,7 +618,7 @@ function bagMetrics() {
   bagDrawW = bagDrawH * ASP.bag;
   if (mobile) {
     SEED_H = { normal: 80, big: 92, gold: 80 };
-    MAX_SEEDS = 70; POUR_BASE = 12;
+    MAX_SEEDS = 50; POUR_BASE = 10;
     TZ = 39; TRASH_DUNK_RADIUS = 19;
   } else {
     SEED_H = { normal: 78, big: 90, gold: 78 };
@@ -633,6 +626,22 @@ function bagMetrics() {
     TZ = 56; TRASH_DUNK_RADIUS = 27;
   }
   }
+let _bagShadowC = null, _bagShadowW = 0, _bagShadowH = 0;
+function ensureBagShadow() {
+  if (_bagShadowW === bagDrawW) return;
+  _bagShadowW = bagDrawW;
+  const pad = 30;
+  const cw = bagDrawW + pad * 2, ch = bagDrawH + pad * 2;
+  _bagShadowC = _bagShadowC || document.createElement('canvas');
+  _bagShadowC.width = cw; _bagShadowC.height = ch;
+  const sg = _bagShadowC.getContext('2d');
+  sg.clearRect(0, 0, cw, ch);
+  sg.shadowColor = 'rgba(62,40,18,0.28)';
+  sg.shadowBlur = 10;
+  sg.shadowOffsetX = 3;
+  sg.shadowOffsetY = 6;
+  sg.drawImage(ASSETS.bag, pad, pad, bagDrawW, bagDrawH);
+}
 function drawBag(g) {
   g.save();
   const wig = BAG.wig > 0 ? Math.sin(BAG.wig * 22) * 0.04 * BAG.wig : 0;
@@ -640,15 +649,13 @@ function drawBag(g) {
   const bx = bagDrawW * 0.04 + peek, by = bagDrawH * 0.08 + peek;
   g.translate(bx, by);
   g.rotate(-0.78 + wig);
-  g.shadowColor = 'rgba(62,40,18,0.28)';
-  g.shadowBlur = 10;
-  g.shadowOffsetX = 3;
-  g.shadowOffsetY = 6;
-  g.drawImage(ASSETS.bag, -bagDrawW / 2, -bagDrawH * 0.5, bagDrawW, bagDrawH);
-  g.shadowColor = 'transparent';
-  g.shadowBlur = 0;
-  g.shadowOffsetX = 0;
-  g.shadowOffsetY = 0;
+  if (!isMobile) {
+    ensureBagShadow();
+    const pad = 30;
+    g.drawImage(_bagShadowC, -bagDrawW / 2 - pad, -bagDrawH * 0.5 - pad);
+  } else {
+    g.drawImage(ASSETS.bag, -bagDrawW / 2, -bagDrawH * 0.5, bagDrawW, bagDrawH);
+  }
   g.restore();
 }
 function mouthPoint() {
@@ -984,8 +991,7 @@ function renderShell(g, sh) {
   // 崩开瞬间弹性放大回落（压紧能量的释放感）；被吸进废纸篓时缩小
   const pop = sh.t < 0.22 ? 1 + 0.25 * Math.exp(-sh.t * 22) * Math.cos(sh.t * 26) : 1;
   const sc = pop * (sh.swept ? (sh.suckScale ?? 1) : 1);
-  // 高速飞行的壳拖短速度线，只有蓄力猛放/远飞才看得见
-  if (!sh.swept && !sh.settled) {
+  if (!isMobile && !sh.swept && !sh.settled) {
     const spd = Math.hypot(sh.vx, sh.vy);
     const k = clamp((spd - 500) / 1100, 0, 1);
     if (k > 0.05) {
@@ -1010,7 +1016,7 @@ function renderShell(g, sh) {
       g.restore();
     }
   }
-  if (!sh.swept) drawShadow(g, sh.x + (sh.shOx ?? 3), sh.y + (sh.shOy ?? 4), w * (sh.shW ?? 0.6), sh.H * (sh.shHr ?? 0.28), sh.shAl ?? 0.35);
+  if (!sh.swept && !isMobile) drawShadow(g, sh.x + (sh.shOx ?? 3), sh.y + (sh.shOy ?? 4), w * (sh.shW ?? 0.6), sh.H * (sh.shHr ?? 0.28), sh.shAl ?? 0.35);
   g.save();
   g.translate(sh.x, sh.y - (sh.hop || 0));
   g.rotate(sh.rot);
@@ -1079,8 +1085,7 @@ function drawGoldDrop(g) {
   g.save();
   g.translate(x, y);
   g.rotate(Math.sin(p * 7) * 0.22);
-  g.shadowColor = 'rgba(255,205,90,0.7)';
-  g.shadowBlur = 14;
+  if (!isMobile) { g.shadowColor = 'rgba(255,205,90,0.7)'; g.shadowBlur = 14; }
   g.drawImage(ASSETS.kernelGold, -wGold / 2, -hGold / 2, wGold, hGold);
   g.restore();
 }
@@ -1106,12 +1111,14 @@ function drawTrash(g) {
     g.translate(0, TZ * 0.48); g.rotate(rot); g.translate(0, -TZ * 0.48);
   }
 
-  if (needSweep) {
-    g.shadowColor = 'rgba(160,110,40,0.55)';
-    g.shadowBlur = 16;
-  } else if (goldTier >= 3) {
-    g.shadowColor = `rgba(255,205,90,${(0.35 + 0.4 * trashShine).toFixed(3)})`;
-    g.shadowBlur = 12 + 12 * trashShine;
+  if (!isMobile) {
+    if (needSweep) {
+      g.shadowColor = 'rgba(160,110,40,0.55)';
+      g.shadowBlur = 16;
+    } else if (goldTier >= 3) {
+      g.shadowColor = `rgba(255,205,90,${(0.35 + 0.4 * trashShine).toFixed(3)})`;
+      g.shadowBlur = 12 + 12 * trashShine;
+    }
   }
 
   // 桶身（集满最后一档金瓜子变全金；刚集满时从下往上"镀金"扫上来）
@@ -1193,7 +1200,7 @@ function drawTrash(g) {
   g.translate(TZ * 0.30, -TZ * 0.22);
   g.rotate(lid * 0.35 + (lidPopH > 0 ? 0.2 * trashLidPop : 0));
   g.translate(-TZ * 0.30, TZ * 0.22);
-  if (goldTier >= 1) {
+  if (!isMobile && goldTier >= 1) {
     g.shadowColor = 'rgba(255,205,90,0.45)';
     g.shadowBlur = 10;
   }
@@ -1890,11 +1897,13 @@ function update(dt) {
 }
 
 /* ================= 渲染 ================= */
+let _tintCache = null, _tintHour = -1;
 function hourTint() {
   const h = new Date().getHours();
-  if (h >= 6 && h < 10) return 'rgba(150,185,255,0.04)';
-  if (h >= 16 && h < 19) return 'rgba(255,150,60,0.05)';
-  return null;
+  if (h === _tintHour) return _tintCache;
+  _tintHour = h;
+  _tintCache = h >= 6 && h < 10 ? 'rgba(150,185,255,0.04)' : h >= 16 && h < 19 ? 'rgba(255,150,60,0.05)' : null;
+  return _tintCache;
 }
 function render() {
   ctx.clearRect(0, 0, W, H);
@@ -1936,8 +1945,7 @@ function render() {
         glowMul = (1 - f * 0.75) * fade;
         bodyAlpha = fade;
       } else {
-        drawShadow(ctx, x, y + 6, kw * 0.55, k.H * 0.3, 0.25);
-        // 落桌后弹跳两下并左右晃动（阻尼震荡），影子留在地面
+        if (!isMobile) drawShadow(ctx, x, y + 6, kw * 0.55, k.H * 0.3, 0.25);
         const lt = k.t - 0.5;
         if (lt > 0) {
           gy -= Math.abs(Math.sin(lt * 11)) * 7 * Math.exp(-lt * 3);
@@ -1966,7 +1974,7 @@ function render() {
 
     // 普通仁：分两口啃掉
     const bites = k.bites;
-    drawShadow(ctx, x, y + 6, kw * 0.6 * (1 - bites * 0.35), k.H * 0.32 * (1 - bites * 0.3), 0.28);
+    if (!isMobile) drawShadow(ctx, x, y + 6, kw * 0.6 * (1 - bites * 0.35), k.H * 0.32 * (1 - bites * 0.3), 0.28);
     ctx.save();
     const flipRot = k.flip ? Math.PI * 2 * easeOutCubic(Math.min(1, k.t / 0.55)) : 0;
     ctx.translate(x, y); ctx.rotate(k.rot + flipRot); ctx.scale(sc, sc);
@@ -2001,8 +2009,8 @@ function render() {
     const img = SPRITES[aspK];
     const w = s.H * ASP[aspK];
     const idle = s.state === 'idle';
-    let hop = (s.hop || 0) + (idle ? Math.sin(now * s.wspd * 1.6 + s.phase) * 1.6 : 0);
-    let wobble = idle ? Math.sin(now * s.wspd + s.phase * 1.7) * 0.022 : 0;
+    let hop = (s.hop || 0) + (!isMobile && idle ? Math.sin(now * s.wspd * 1.6 + s.phase) * 1.6 : 0);
+    let wobble = !isMobile && idle ? Math.sin(now * s.wspd + s.phase * 1.7) * 0.022 : 0;
     // 被飞壳砸中：弹两下并晃动，逐渐平息
     if (s.kickT > 0) {
       const kp = 1 - s.kickT / 0.85;
@@ -2023,38 +2031,45 @@ function render() {
     ctx.restore();
   }
 
-  // 金星
+  ctx.fillStyle = '#ffd76e';
   for (const p of goldParts) {
     const f = 1 - p.t / p.life;
     ctx.globalAlpha = f;
     const r = p.size * (0.6 + 0.4 * Math.sin(p.t * 18));
-    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.t * 4);
-    ctx.beginPath();
-    for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2; ctx.moveTo(0, 0); ctx.lineTo(Math.cos(a) * r * 2, Math.sin(a) * r * 2); }
-    ctx.strokeStyle = '#ffd76e'; ctx.lineWidth = 1.6; ctx.stroke();
-    ctx.restore();
+    if (isMobile) {
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+    } else {
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.t * 4);
+      ctx.beginPath();
+      for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2; ctx.moveTo(0, 0); ctx.lineTo(Math.cos(a) * r * 2, Math.sin(a) * r * 2); }
+      ctx.strokeStyle = '#ffd76e'; ctx.lineWidth = 1.6; ctx.stroke();
+      ctx.restore();
+    }
   }
   ctx.globalAlpha = 1;
 
-  // 彩带：绕长轴翻面——压缩到近零再展开，背面用暗色；长边弓起模拟软纸的弯曲颤动
   for (const c of confetti) {
-    if (c.delay > 0) continue;  // 还没出场
-    const f = Math.sin(now * c.fq * 2.2 + c.ph);  // 翻面相位，符号区分正反面
-    const bend = Math.sin(now * c.fq * 1.4 + c.ph * 1.7) * c.h * 0.45;  // 弯曲量随时间摆动
+    if (c.delay > 0) continue;
+    const f = Math.sin(now * c.fq * 2.2 + c.ph);
     const hw = c.w / 2, hh = c.h / 2;
     ctx.globalAlpha = Math.min(1, (c.life - c.t) / 0.5);
     ctx.save();
     ctx.translate(c.x, c.y);
     ctx.rotate(c.rot);
     ctx.scale(1, Math.max(0.07, Math.abs(f)));
-    ctx.fillStyle = f >= 0 ? c.col : c.colB;  // 纸质感：正反两面色，无反光
-    ctx.beginPath();
-    ctx.moveTo(-hw, -hh);
-    ctx.quadraticCurveTo(0, -hh + bend, hw, -hh);
-    ctx.lineTo(hw, hh);
-    ctx.quadraticCurveTo(0, hh + bend, -hw, hh);
-    ctx.closePath();
-    ctx.fill();
+    ctx.fillStyle = f >= 0 ? c.col : c.colB;
+    if (isMobile) {
+      ctx.fillRect(-hw, -hh, c.w, c.h);
+    } else {
+      const bend = Math.sin(now * c.fq * 1.4 + c.ph * 1.7) * c.h * 0.45;
+      ctx.beginPath();
+      ctx.moveTo(-hw, -hh);
+      ctx.quadraticCurveTo(0, -hh + bend, hw, -hh);
+      ctx.lineTo(hw, hh);
+      ctx.quadraticCurveTo(0, hh + bend, -hw, hh);
+      ctx.closePath();
+      ctx.fill();
+    }
     ctx.restore();
   }
   ctx.globalAlpha = 1;
@@ -2090,7 +2105,7 @@ function loop(ts) {
 function resize() {
   W = window.innerWidth; H = window.innerHeight;
   isMobile = W < 600;
-  DPR = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+  DPR = Math.min(window.devicePixelRatio || 1, isMobile ? 1 : 2);
   for (const [c, g] of [[cv, ctx], [bg, bgx], [layer, lyx]]) {
     c.width = W * DPR; c.height = H * DPR;
     g.setTransform(DPR, 0, 0, DPR, 0, 0);
